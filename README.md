@@ -28,6 +28,23 @@ neither by default; if it finds neither it tells you to run
 
 Any other static server works too (`npx serve`, `caddy file-server`, nginx).
 
+### Hosting it on GitHub Pages
+
+The app is plain static files with relative paths, so it works unchanged from a
+project subpath. In the repository: **Settings → Pages → Source: Deploy from a
+branch**, pick this branch and the `/ (root)` folder. The site lands at
+`https://<user>.github.io/<repo>/` a minute or so later.
+
+Your API key is not part of any of this. It lives in the `localStorage` of
+whichever browser you typed it into, so visitors to a public deployment see an
+empty Keys panel and must supply their own. Note that browser storage is scoped
+to the *origin* (`https://<user>.github.io`), not the repo path, so every Pages
+site under that account shares one storage area.
+
+The `localhost` proxy fallback does not pair well with an HTTPS Pages origin:
+Chrome permits requests to `http://localhost`, Safari blocks them. Run the app
+locally if you need the proxy.
+
 ## Add your API key
 
 1. Click **Keys** in the toolbar.
@@ -199,6 +216,7 @@ menu — 20 assertions, no network access required.
 
 ```
 index.html            shell: toolbar, palette, canvas, log
+.nojekyll             tells GitHub Pages to serve the files as-is
 start.command         double-click launcher for macOS
 styles.css            all styling (dark, CSS custom properties)
 src/core/             store (graph state), engine (topo run + cache), types
