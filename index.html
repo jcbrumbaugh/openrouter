@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Node Space</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='5' fill='%237dd3a0'/><circle cx='23' cy='16' r='5' fill='%23c49bff'/></svg>" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand"><span class="brand-dot"></span> Node Space</div>
+      <div class="toolbar-group">
+        <button id="run" class="primary" type="button" title="Run the graph (Ctrl+Enter)">Run &#9654;</button>
+        <button id="run-force" class="mini" type="button" title="Ignore cached results and run everything">Force</button>
+        <button id="stop" class="mini danger" type="button">Stop</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="keys" class="mini" type="button">Keys</button>
+        <button id="starter" class="mini" type="button" title="Drop in a prompt &rarr; video &rarr; preview chain">Starter</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="export" class="mini" type="button">Export</button>
+        <label class="mini file-label" title="Import a graph JSON file">
+          Import<input id="import" type="file" accept="application/json" hidden />
+        </label>
+        <button id="clear" class="mini danger" type="button">Clear</button>
+      </div>
+      <div class="toolbar-group right">
+        <button id="fit" class="mini" type="button">Fit</button>
+        <button id="reset-view" class="mini" type="button">100%</button>
+        <span id="zoom-label" class="zoom">100%</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside id="palette" class="palette" aria-label="Node palette"></aside>
+      <section id="canvas" class="canvas" aria-label="Graph canvas"></section>
+    </main>
+
+    <div id="log" class="log"></div>
+    <datalist id="model-slugs"></datalist>
+
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
