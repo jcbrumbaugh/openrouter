@@ -9,14 +9,24 @@ first provider wired up is **OpenRouter**, including a video node aimed at
 
 ## Run it
 
-ES modules need a real origin, so `file://` will not work. Serve the folder:
+Opening `index.html` by double-clicking will **not** work: browsers refuse to
+load ES modules over `file://`, so the folder has to be served.
+
+**On a Mac, double-click `start.command` in Finder.** It serves the folder and
+opens your browser. Close the Terminal window it opens to stop the server.
+
+From a terminal, either of these does the same thing:
 
 ```bash
-npm run dev          # python3 -m http.server 8080
-# then open http://localhost:8080
+npm run dev            # node scripts/serve.mjs --open
+python3 -m http.server 8080    # then open http://localhost:8080
 ```
 
-Any static server works (`npx serve`, `caddy file-server`, nginx, GitHub Pages).
+`start.command` uses python3 if it is there and falls back to node. macOS ships
+neither by default; if it finds neither it tells you to run
+`xcode-select --install` (one time, gives you python3) or install Node.
+
+Any other static server works too (`npx serve`, `caddy file-server`, nginx).
 
 ## Add your API key
 
@@ -189,12 +199,14 @@ menu — 20 assertions, no network access required.
 
 ```
 index.html            shell: toolbar, palette, canvas, log
+start.command         double-click launcher for macOS
 styles.css            all styling (dark, CSS custom properties)
 src/core/             store (graph state), engine (topo run + cache), types
 src/nodes/            registry + node definitions (core, openrouter)
 src/providers/        openrouter client, credential keystore
 src/ui/               canvas/wires, node cards, palette, keys modal, log
 src/util/             dom helpers, response extraction + templating
+scripts/serve.mjs     local dev server
 scripts/proxy.mjs     optional local proxy
 tests/                headless smoke test and screenshot tool
 ```

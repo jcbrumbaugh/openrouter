@@ -5,9 +5,11 @@
   "type": "module",
   "description": "A node-based HTML canvas for wiring API calls together, starting with OpenRouter.",
   "scripts": {
-    "dev": "python3 -m http.server 8080",
+    "dev": "node scripts/serve.mjs --open",
+    "dev:python": "python3 -m http.server 8080",
     "proxy": "node scripts/proxy.mjs",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/smoke.mjs",
+    "screenshot": "node tests/screenshot.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.0"
