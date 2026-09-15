@@ -38,6 +38,7 @@ export function createCanvas(root, ctx) {
   let selectedEdge = null;
   let dragWire = null;
   let redrawQueued = false;
+  let topZ = 1;
 
   const view = store.state.view;
 
@@ -121,12 +122,14 @@ export function createCanvas(root, ctx) {
   function addCard(node) {
     const card = createNodeCard(node, ctx);
     cards.set(node.id, card);
+    card.el.style.zIndex = String(++topZ);
     nodesLayer.append(card.el);
     scheduleRedraw();
     return card;
   }
 
   function rebuild() {
+    for (const card of cards.values()) card.destroy();
     clear(nodesLayer);
     clear(wires);
     cards.clear();
@@ -258,7 +261,10 @@ export function createCanvas(root, ctx) {
       const card = cards.get(cardEl.dataset.nodeId);
       selectedEdge = null;
       store.select(card.node.id, { additive: event.shiftKey });
-      nodesLayer.append(cardEl); // bring to front
+      // Raise with z-index, never by re-appending: moving a card in the DOM
+      // tears down whatever is mid-interaction inside it, which closes native
+      // <select> popups the instant they open.
+      cardEl.style.zIndex = String(++topZ);
       const interactive = event.target.closest('input, textarea, select, button, a, video, label, .preview');
       if (!interactive) {
         event.preventDefault();
@@ -307,7 +313,9 @@ export function createCanvas(root, ctx) {
 
   store.on('node:add', (node) => addCard(node));
   store.on('node:remove', (id) => {
-    cards.get(id)?.el.remove();
+    const card = cards.get(id);
+    card?.destroy();
+    card?.el.remove();
     cards.delete(id);
     scheduleRedraw();
   });

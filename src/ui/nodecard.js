@@ -60,6 +60,7 @@ function buildField(field, ctx) {
   const value = node.data[field.id];
   let input = null;
   let body;
+  let unsubscribe = null;
 
   const commit = (next) => store.updateNodeData(node.id, { [field.id]: next });
 
@@ -115,7 +116,7 @@ function buildField(field, ctx) {
         input.value = node.data[field.id] ?? '';
       };
       input = h('select', { class: 'field-input', onchange: (e) => commit(e.target.value) });
-      keystore.subscribe(rebuild);
+      unsubscribe = keystore.subscribe(rebuild);
       rebuild();
       body = h('div', { class: 'field-row' }, [
         input,
@@ -195,6 +196,9 @@ function buildField(field, ctx) {
   return {
     el,
     field,
+    destroy() {
+      unsubscribe?.();
+    },
     sync() {
       el.classList.toggle('hidden', !visible(field, node.data));
       const current = node.data[field.id];
@@ -331,6 +335,9 @@ export function createNodeCard(node, ctx) {
     portEls,
     syncStatus,
     syncFields,
+    destroy() {
+      for (const view of fieldViews) view.destroy();
+    },
     setSelected(on) {
       card.classList.toggle('selected', on);
     },

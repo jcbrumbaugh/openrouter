@@ -240,6 +240,38 @@ try {
   await page.locator('.quick-add .palette-item').first().click();
   check('quick add inserts the node', (await page.evaluate(() => window.nodeSpace.store.state.nodes.size)) === after + 1);
 
+  // 11. a native dropdown inside a node must survive the click that opens it.
+  // Regression: "bring clicked node to front" used to re-append the card, which
+  // re-parents the <select> and kills the popup the moment it opens.
+  await page.evaluate(() => window.nodeSpace.canvas.fitView());
+  await page.waitForTimeout(150);
+  await page.evaluate(() => {
+    window.__domChurn = 0;
+    new MutationObserver((records) => {
+      for (const r of records) window.__domChurn += r.removedNodes.length + r.addedNodes.length;
+    }).observe(document.querySelector('.nodes'), { childList: true });
+  });
+  const credSelect = page.locator('.node[data-type="or-video"] select').first();
+  const credBox = await credSelect.boundingBox();
+  await page.mouse.click(credBox.x + credBox.width / 2, credBox.y + credBox.height / 2);
+  await page.waitForTimeout(150);
+  const churn = await page.evaluate(() => window.__domChurn);
+  check('clicking a node dropdown does not re-parent the card', churn === 0, `dom changes=${churn}`);
+  check('the dropdown keeps focus', (await page.evaluate(() => document.activeElement?.tagName)) === 'SELECT');
+  check('clicking a node still raises it', await page.evaluate(() => {
+    const z = Number(document.querySelector('.node[data-type="or-video"]').style.zIndex);
+    const others = [...document.querySelectorAll('.node')].map((el) => Number(el.style.zIndex) || 0);
+    return z === Math.max(...others);
+  }));
+  const picked = await page.evaluate(() => {
+    const node = [...window.nodeSpace.store.state.nodes.values()].find((n) => n.type === 'or-video');
+    const select = document.querySelector('.node[data-type="or-video"] select');
+    select.value = select.options[1].value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return window.nodeSpace.store.state.nodes.get(node.id).data.credential;
+  });
+  check('picking a key stores it on the node', Boolean(picked), String(picked));
+
   check('no console errors during the whole run', consoleErrors.length === 0, consoleErrors.join(' | '));
 } finally {
   await browser.close();
