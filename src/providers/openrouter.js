@@ -63,11 +63,24 @@ export async function request({
       payload?.raw ||
       response.statusText;
     const err = new Error(`${response.status} ${detail}`.trim());
+    if (response.status === 401) {
+      err.message += '. That key was rejected - it is usually revoked, mistyped, or from a different account. Open Keys and re-paste it, then use Test.';
+    } else if (response.status === 402) {
+      err.message += '. Your OpenRouter account is out of credit for this model.';
+    } else if (response.status === 404) {
+      err.message += '. Check the model slug and the request path (the refresh button next to Model lists what exists).';
+    }
     err.status = response.status;
     err.payload = payload;
     throw err;
   }
   return payload;
+}
+
+// GET /key reports what a key is, without spending anything - the cheapest way
+// to tell "bad key" apart from "bad request".
+export function keyInfo({ baseUrl, apiKey, signal } = {}) {
+  return request({ baseUrl, path: '/key', apiKey, method: 'GET', signal });
 }
 
 export function listModels({ baseUrl, apiKey, signal } = {}) {

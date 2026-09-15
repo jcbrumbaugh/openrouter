@@ -49,7 +49,12 @@ locally if you need the proxy.
 
 1. Click **Keys** in the toolbar.
 2. Paste an OpenRouter key, give it a label, save.
-3. Pick that key in the *API key* dropdown on any OpenRouter node.
+3. Hit **Test** next to the saved key. It calls OpenRouter's `/key` endpoint,
+   which spends nothing, and reports either what the key is (label, usage,
+   limit) or why it was rejected. `401 User not found` means the key is revoked
+   or mistyped — the most common cause is pasting a key that was rotated after
+   it was copied.
+4. Pick that key in the *API key* dropdown on any OpenRouter node.
 
 Keys are stored in **this browser's `localStorage`** and nowhere else. They are
 deliberately left out of saved and exported graphs, so a `.json` you share

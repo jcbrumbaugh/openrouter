@@ -307,7 +307,12 @@ textarea.field-input { font-family: var(--mono); font-size: 12px; line-height: 1
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+.key-info { min-width: 0; }
 .key-label { font-weight: 600; }
+.key-verdict { font-size: 11px; margin-top: 4px; line-height: 1.5; word-break: break-word; }
+.key-verdict.ok { color: var(--ok); }
+.key-verdict.warn { color: var(--warn); }
+.key-verdict.err { color: var(--err); }
 .key-mask { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 
 /* ---- log ---- */

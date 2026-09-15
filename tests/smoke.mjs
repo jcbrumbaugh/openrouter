@@ -26,6 +26,12 @@ function mockApi(req, res, url, body, origin) {
   };
   apiCalls.push(`${req.method} ${url.pathname}`);
 
+  if (url.pathname === '/api/v1/key') {
+    if (req.headers.authorization === 'Bearer sk-or-v1-testkey') {
+      return json(200, { data: { label: 'test key', usage: 0.42, limit: 10 } });
+    }
+    return json(401, { error: { message: 'User not found.' } });
+  }
   if (url.pathname === '/api/v1/models') {
     return json(200, {
       data: [
@@ -272,7 +278,29 @@ try {
   });
   check('picking a key stores it on the node', Boolean(picked), String(picked));
 
-  check('no console errors during the whole run', consoleErrors.length === 0, consoleErrors.join(' | '));
+  // 12. the Keys panel can tell a working key from a rejected one
+  await page.locator('#keys').click();
+  await page.locator('.modal:not(.hidden)').waitFor();
+  await page.locator('.key-row', { hasText: 'test key' }).getByRole('button', { name: 'Test' }).click();
+  await page.waitForSelector('.key-verdict.ok', { timeout: 10000 });
+  const goodVerdict = await page.locator('.key-verdict.ok').first().textContent();
+  check('Test reports a working key', /Working/.test(goodVerdict), goodVerdict);
+  check('Test shows the key usage', /used \$0\.42|limit \$10/.test(goodVerdict), goodVerdict);
+
+  await page.evaluate(() => window.nodeSpace.keystore.save({ label: 'revoked key', value: 'sk-or-v1-dead', provider: 'openrouter' }));
+  await page.locator('.key-row', { hasText: 'revoked key' }).getByRole('button', { name: 'Test' }).click();
+  await page.waitForSelector('.key-verdict.err', { timeout: 10000 });
+  const badVerdict = await page.locator('.key-verdict.err').first().textContent();
+  check('Test flags a rejected key as revoked or mistyped', /Rejected \(401\)/.test(badVerdict), badVerdict);
+  await page.locator('.modal-head button').click();
+  await page.evaluate(() => window.nodeSpace.keystore.list().forEach((c) => {
+    if (c.label === 'revoked key') window.nodeSpace.keystore.remove(c.id);
+  }));
+
+  // The revoked-key check above deliberately provokes a 401, and Chromium logs
+  // every failed request to the console; that one is expected.
+  const unexpected = consoleErrors.filter((text) => !/status of 401/.test(text));
+  check('no unexpected console errors during the whole run', unexpected.length === 0, unexpected.join(' | '));
 } finally {
   await browser.close();
   server.close();

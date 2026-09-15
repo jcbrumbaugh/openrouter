@@ -26,7 +26,16 @@ const logPanel = createLog(document.getElementById('log'));
 const log = (message, level, node) => logPanel.log(message, level, node);
 
 const engine = createEngine(store, { keystore, log });
-const keysModal = createKeysModal(document.body, { keystore });
+const keysModal = createKeysModal(document.body, {
+  keystore,
+  // Reuse whatever base URL the graph already points at (e.g. the local proxy).
+  getBaseUrl: () => {
+    for (const node of store.state.nodes.values()) {
+      if (node.type.startsWith('or-') && node.data.baseUrl) return node.data.baseUrl;
+    }
+    return '';
+  },
+});
 
 const canvasRoot = document.getElementById('canvas');
 
