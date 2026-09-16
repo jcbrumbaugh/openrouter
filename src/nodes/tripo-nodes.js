@@ -2,7 +2,8 @@
 // you already generated (convert, re-texture, stylize).
 
 import { asText, media } from '../core/types.js';
-import { dataUrlToBlob, fetchViaGateway, sleep } from '../util/media.js';
+import { dataUrlToBlob, fetchViaGateway } from '../util/media.js';
+import { decodersNeeded, describeGlb, inspectGlb } from '../util/glb.js';
 import { DEFAULT_GATEWAY, gatewayOrigin } from '../providers/gateway.js';
 import {
   DEFAULT_TRIPO_BASE,
@@ -33,9 +34,16 @@ async function resolveFile({ imageUrl, baseUrl, apiKey, signal, log }) {
 // still downloads even when it cannot be previewed.
 async function localiseMesh({ url, baseUrl, name, signal, log }) {
   try {
-    const { url: blobUrl, bytes } = await fetchViaGateway(url, gatewayOrigin(baseUrl), signal);
-    log(`mesh downloaded (${Math.round(bytes / 1024)} KB)`);
-    return media('model3d', blobUrl, { mime: 'model/gltf-binary', name, sourceUrl: url });
+    const { url: blobUrl, buffer } = await fetchViaGateway(url, gatewayOrigin(baseUrl), signal);
+    const info = /\.(glb|gltf)$/i.test(name) ? inspectGlb(buffer) : null;
+    log(`mesh downloaded (${info ? describeGlb(info) : `${Math.round(buffer.byteLength / 1024)} KB`})`);
+    if (info?.error) log(`the downloaded file does not look like a mesh: ${info.error}`, 'warn');
+    return media('model3d', blobUrl, {
+      mime: 'model/gltf-binary',
+      name,
+      sourceUrl: url,
+      info: info ?? undefined,
+    });
   } catch (err) {
     log(`could not bring the mesh local, preview will be download-only: ${err.message}`, 'warn');
     return media('model3d', url, { mime: 'model/gltf-binary', name, sourceUrl: url });

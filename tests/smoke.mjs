@@ -677,7 +677,53 @@ try {
     return store.state.nodes.get(tripo.id).status === 'done';
   }) && tripoLastBody?.face_limit === undefined, JSON.stringify(tripoLastBody?.face_limit));
 
-  // 19. credential dropdowns are scoped per provider
+  // 19. mesh inspection: the app can say why a preview failed
+  const glb = await page.evaluate(async () => {
+    const { inspectGlb, describeGlb, decodersNeeded } = await import('/src/util/glb.js');
+    const make = (obj, padByte = 0x20) => {
+      const jsonBytes = new TextEncoder().encode(JSON.stringify(obj));
+      const pad = (4 - (jsonBytes.length % 4)) % 4;
+      const total = 12 + 8 + jsonBytes.length + pad;
+      const buf = new ArrayBuffer(total);
+      const dv = new DataView(buf);
+      dv.setUint32(0, 0x46546c67, true);
+      dv.setUint32(4, 2, true);
+      dv.setUint32(8, total, true);
+      dv.setUint32(12, jsonBytes.length + pad, true);
+      dv.setUint32(16, 0x4e4f534a, true);
+      const bytes = new Uint8Array(buf, 20);
+      bytes.fill(padByte);
+      bytes.set(jsonBytes);
+      return buf;
+    };
+    const draco = inspectGlb(make({
+      asset: { version: '2.0', generator: 'Tripo' },
+      extensionsUsed: ['KHR_draco_mesh_compression'],
+      extensionsRequired: ['KHR_draco_mesh_compression'],
+    }));
+    const plain = inspectGlb(make({ asset: { version: '2.0' } }, 0x00));
+    const notMesh = inspectGlb(new TextEncoder().encode(JSON.stringify({ error: 'this link has expired and here is some padding' })).buffer);
+    return {
+      dracoIsGlb: draco.isGlb,
+      dracoGenerator: draco.generator,
+      dracoDecoders: decodersNeeded(draco),
+      dracoDescription: describeGlb(draco),
+      plainDecoders: decodersNeeded(plain),
+      plainIsGlb: plain.isGlb,
+      notMeshError: notMesh.error,
+    };
+  });
+  check('a real mesh is recognised', glb.dracoIsGlb === true && glb.dracoGenerator === 'Tripo', JSON.stringify(glb));
+  check('a compressed mesh names the decoder it needs', glb.dracoDecoders.join() === 'Draco compression', JSON.stringify(glb.dracoDecoders));
+  check('the description is human readable', /glTF 2, needs Draco compression/.test(glb.dracoDescription), glb.dracoDescription);
+  check('an uncompressed mesh needs no decoder', glb.plainIsGlb === true && glb.plainDecoders.length === 0, JSON.stringify(glb));
+  check('a non-mesh response is called out', /not a binary glTF|returned JSON/.test(glb.notMeshError ?? ''), String(glb.notMeshError));
+
+  check('an empty preview says how to fill it',
+    /press Run/.test(await page.evaluate(() => document.querySelector('.preview.empty')?.textContent ?? '')),
+    await page.evaluate(() => document.querySelector('.preview.empty')?.textContent ?? 'none'));
+
+  // 20. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

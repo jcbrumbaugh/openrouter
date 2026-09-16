@@ -229,6 +229,14 @@ directly: provider CDNs serve no CORS headers, so a viewer pointed at the remote
 URL renders an empty box. If that download fails the node falls back to the
 remote URL and says the preview will be download-only.
 
+Each downloaded mesh is inspected before it is shown, and the log line reports
+what arrived — size, glTF version, and any extension that needs a decoder the
+viewer fetches at runtime (`KHR_draco_mesh_compression`, `EXT_meshopt_compression`,
+`KHR_texture_basisu`). If the viewer then fails, the preview names that decoder
+rather than saying the mesh is broken, because it usually is not: the file
+downloads and opens elsewhere perfectly well. A response that is not a mesh at
+all — an expired-link JSON error, say — is reported as such.
+
 ### Follow-up tasks
 
 `Tripo Refine` takes the **Task** output of a Tripo 3D node and runs another

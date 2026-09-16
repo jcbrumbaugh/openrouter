@@ -2,6 +2,7 @@
 
 import { clear, h } from '../util/dom.js';
 import { PORT_COLORS } from '../core/types.js';
+import { decodersNeeded } from '../util/glb.js';
 
 // <model-viewer> is the one external dependency in the app, and it is fetched
 // lazily: nothing loads from a CDN unless a 3D result actually appears. If the
@@ -62,8 +63,19 @@ function renderModel3d(value) {
       });
       // A mesh served straight from a provider CDN usually fails here on CORS;
       // say so rather than showing an empty box.
-      viewer.addEventListener('error', () => {
-        note('The mesh could not be loaded into the viewer. Use the download link - the file itself is fine.');
+      // model-viewer fires 'error' for several things; only a load failure means
+      // the mesh itself did not display. Say which, because "it failed" is not
+      // actionable and the usual cause is a decoder the viewer fetches at runtime.
+      viewer.addEventListener('error', (event) => {
+        const detail = event.detail ?? {};
+        if (detail.type && detail.type !== 'loadfailure') return;
+        const decoders = decodersNeeded(value.info ?? {});
+        const reason = detail.sourceError?.message ?? detail.type ?? 'unknown error';
+        note(
+          decoders.length
+            ? `This mesh uses ${decoders.join(' and ')}, and the decoder for it could not load here. The file is fine - download it, or re-export without compression. (${reason})`
+            : `The viewer could not load this mesh: ${reason}. The file itself downloaded fine - use the download link.`,
+        );
       });
       stage.append(viewer);
     })
@@ -98,7 +110,7 @@ function visible(field, data) {
 
 export function renderPreview(value) {
   if (value === null || value === undefined || value === '') {
-    return h('div', { class: 'preview empty' }, 'no result yet');
+    return h('div', { class: 'preview empty' }, 'no result yet - press Run at the top');
   }
   if (typeof value === 'object' && value.type === 'video' && value.url) {
     return h('div', { class: 'preview' }, [

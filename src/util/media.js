@@ -76,6 +76,7 @@ export async function fetchViaGateway(url, gatewayOrigin, signal) {
     }
     throw new Error(`Could not download the result through the gateway: ${detail}`);
   }
-  const blob = await response.blob();
-  return { url: URL.createObjectURL(blob), bytes: blob.size };
+  const buffer = await response.arrayBuffer();
+  const blob = new Blob([buffer], { type: response.headers.get('content-type') ?? 'application/octet-stream' });
+  return { url: URL.createObjectURL(blob), bytes: blob.size, buffer };
 }
