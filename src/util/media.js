@@ -36,3 +36,26 @@ export async function toDataUrl(url, signal) {
   if (!response.ok) throw new Error(`Could not fetch the input image (${response.status}).`);
   return blobToDataUrl(await response.blob());
 }
+
+// Abortable delay used by every polling node.
+export function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+// Splits a data URL into a Blob plus a sensible file extension.
+export function dataUrlToBlob(dataUrl) {
+  const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(dataUrl);
+  if (!match) throw new Error('That is not a data URL.');
+  const [, mime, isBase64, payload] = match;
+  const bytes = isBase64
+    ? Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))
+    : new TextEncoder().encode(decodeURIComponent(payload));
+  const extension = (mime.split('/')[1] ?? 'jpg').replace('jpeg', 'jpg').split('+')[0];
+  return { blob: new Blob([bytes], { type: mime }), mime, extension };
+}

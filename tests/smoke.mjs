@@ -25,6 +25,13 @@ const apiCalls = [];
 // as base64, exactly as the real server does.
 const FAKE_GLB = Buffer.from('glTF fake binary payload for tests').toString('base64');
 
+// Tripo and Runway stand-ins, shaped like the real APIs (contracts read from
+// tripo3d 0.4.2 and @runwayml/sdk 4.20.0).
+let tripoPolls = 0;
+let runwayPolls = 0;
+let tripoLastBody = null;
+let runwayLastBody = null;
+
 function mockApi(req, res, url, body, origin) {
   const json = (status, payload) => {
     res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -32,6 +39,43 @@ function mockApi(req, res, url, body, origin) {
   };
   apiCalls.push(`${req.method} ${url.pathname}`);
 
+  if (url.pathname === '/tripo/v2/openapi/upload' && req.method === 'POST') {
+    return json(200, { code: 0, data: { image_token: 'tok_abc' } });
+  }
+  if (url.pathname === '/tripo/v2/openapi/task' && req.method === 'POST') {
+    if (req.headers.authorization !== 'Bearer tripo-key') return json(401, { code: 1002, message: 'invalid token' });
+    tripoLastBody = body;
+    tripoPolls = 0;
+    return json(200, { code: 0, data: { task_id: 'tripo_task_1' } });
+  }
+  if (url.pathname === '/tripo/v2/openapi/task/tripo_task_1') {
+    tripoPolls += 1;
+    if (tripoPolls < 2) return json(200, { code: 0, data: { status: 'running', progress: 40 } });
+    return json(200, {
+      code: 0,
+      data: {
+        status: 'success',
+        progress: 100,
+        output: {
+          pbr_model: `${origin}/tests/fixtures/model.glb`,
+          rendered_image: `${origin}/tests/fixtures/render.png`,
+        },
+      },
+    });
+  }
+  if (url.pathname === '/runway/v1/image_to_video' && req.method === 'POST') {
+    if (req.headers.authorization !== 'Bearer runway-key') return json(401, { error: 'unauthorized' });
+    if (req.headers['x-runway-version'] !== '2024-11-06') return json(400, { error: 'missing X-Runway-Version' });
+    if (!body?.promptImage) return json(400, { error: 'promptImage required' });
+    runwayLastBody = body;
+    runwayPolls = 0;
+    return json(200, { id: 'runway_task_1' });
+  }
+  if (url.pathname === '/runway/v1/tasks/runway_task_1') {
+    runwayPolls += 1;
+    if (runwayPolls < 2) return json(200, { id: 'runway_task_1', status: 'RUNNING' });
+    return json(200, { id: 'runway_task_1', status: 'SUCCEEDED', output: [`${origin}/tests/fixtures/clip.mp4`] });
+  }
   if (url.pathname === '/hy3d/send' && req.method === 'POST') {
     if (!body?.image?.startsWith('data:image/')) {
       return json(400, { message: 'image must be a base64 data URL' });
@@ -107,7 +151,7 @@ function startServer() {
   const server = http.createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const url = new URL(req.url, origin);
-    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/hy3d/')) {
+    if (['/api/', '/hy3d/', '/tripo/', '/runway/'].some((p) => url.pathname.startsWith(p))) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       let body = null;
@@ -160,15 +204,32 @@ try {
   // 1. boot + starter graph
   check('app boots without page errors', consoleErrors.length === 0, consoleErrors.join(' | '));
   const nodeCount = await page.locator('.node').count();
-  check('starter graph renders 3 nodes', nodeCount === 3, `saw ${nodeCount}`);
+  check('starter graph renders its 6 nodes', nodeCount === 6, `saw ${nodeCount}`);
   const wireCount = await page.locator('path.wire').count();
-  check('starter graph renders 2 wires', wireCount === 2, `saw ${wireCount}`);
+  check('starter graph renders its 5 wires', wireCount === 5, `saw ${wireCount}`);
+  check('starter graph wires Tripo into Runway', await page.evaluate(() => {
+    const { store } = window.nodeSpace;
+    const tripo = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d');
+    const runway = [...store.state.nodes.values()].find((n) => n.type === 'runway-video');
+    return store.outgoingEdges(tripo.id).some((e) => e.to.node === runway.id && e.from.port === 'render');
+  }));
 
   // 2. palette adds a node
   await page.getByRole('button', { name: 'OpenRouter Chat' }).click();
-  check('palette click adds a node', (await page.locator('.node').count()) === 4);
+  check('palette click adds a node', (await page.locator('.node').count()) === 7);
 
-  // 3. wiring by drag: text output -> chat prompt input
+  // 3. wiring by drag: text output -> chat prompt input.
+  // Park the new node in clear space first; a card sitting under another one
+  // would make the drop land on the wrong element.
+  await page.evaluate(() => {
+    const { store, canvas } = window.nodeSpace;
+    const chat = [...store.state.nodes.values()].find((n) => n.type === 'or-chat');
+    const text = [...store.state.nodes.values()].find((n) => n.type === 'text');
+    store.moveNode(chat.id, text.x + 420, text.y);
+    canvas.fitView();
+  });
+  await page.waitForTimeout(200);
+  const edgesBefore = await page.evaluate(() => window.nodeSpace.store.state.edges.size);
   const textOut = page.locator('.node[data-type="text"] .port-dot.out').first();
   const chatIn = page.locator('.node[data-type="or-chat"] .port-dot.in').first();
   const a = await textOut.boundingBox();
@@ -178,7 +239,7 @@ try {
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
   await page.mouse.up();
   const edges = await page.evaluate(() => window.nodeSpace.store.state.edges.size);
-  check('dragging between ports creates an edge', edges === 3, `edges=${edges}`);
+  check('dragging between ports creates an edge', edges === edgesBefore + 1, `${edgesBefore} -> ${edges}`);
 
   // 4. type checking and cycle guard
   const guards = await page.evaluate(() => {
@@ -195,10 +256,22 @@ try {
   check('image output is rejected by a text input', guards.badType.ok === false, JSON.stringify(guards.badType));
   check('loops are rejected', guards.cycle.ok === false, JSON.stringify(guards.cycle));
 
-  // 5. keys + running the video branch against the mock API
+  // 5. keys + running an OpenRouter video branch against the mock API.
+  // Built explicitly rather than reusing the starter graph, so Run has exactly
+  // this chain to execute.
   await page.evaluate((baseUrl) => {
     const { keystore, store } = window.nodeSpace;
+    store.clearAll();
     const id = keystore.save({ label: 'test key', value: 'sk-or-v1-testkey', provider: 'openrouter' });
+    const prompt = store.addNode('text', { x: 40, y: 80 }, { value: 'a neon alley' });
+    const video = store.addNode('or-video', { x: 380, y: 40 });
+    const chat = store.addNode('or-chat', { x: 380, y: 520 });
+    const preview = store.addNode('preview', { x: 720, y: 80 });
+    const chatOut = store.addNode('preview', { x: 720, y: 520 });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: chat.id, port: 'prompt' });
+    store.addEdge({ node: video.id, port: 'video' }, { node: preview.id, port: 'value' });
+    store.addEdge({ node: chat.id, port: 'text' }, { node: chatOut.id, port: 'value' });
     for (const node of store.state.nodes.values()) {
       if (node.type.startsWith('or-')) {
         store.updateNodeData(node.id, { credential: id, baseUrl: `${baseUrl}/api/v1`, pollSeconds: 1 });
@@ -384,13 +457,101 @@ try {
   });
   check('an unreachable Hunyuan3D server explains itself', /Could not reach the Hunyuan3D server/.test(offline), offline);
 
+  // 14. the full pipeline: image -> Tripo mesh + render -> Runway video
+  const pipeline = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.save({ label: 'tripo test', value: 'tripo-key', provider: 'tripo' });
+    const runwayKey = keystore.save({ label: 'runway test', value: 'runway-key', provider: 'runway' });
+
+    const image = store.addNode('image-input', { x: 0, y: 2600 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', name: 'armor.png', mime: 'image/png' },
+    });
+    const tripo = store.addNode('tripo-3d', { x: 320, y: 2600 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    const prompt = store.addNode('text', { x: 320, y: 2950 }, { value: 'slow orbit, studio light' });
+    const video = store.addNode('runway-video', { x: 660, y: 2700 }, {
+      credential: runwayKey,
+      baseUrl: `${baseUrl}/runway`,
+      pollSeconds: 1,
+      model: 'seedance2_5',
+    });
+    const out = store.addNode('preview', { x: 1000, y: 2700 });
+
+    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'image' });
+    store.addEdge({ node: tripo.id, port: 'render' }, { node: video.id, port: 'image' });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
+    store.addEdge({ node: video.id, port: 'video' }, { node: out.id, port: 'value' });
+
+    await engine.run({ targets: [out.id], force: true });
+    const tripoNode = store.state.nodes.get(tripo.id);
+    const videoNode = store.state.nodes.get(video.id);
+    return {
+      tripo: { status: tripoNode.status, message: tripoNode.message, outputs: tripoNode.outputs },
+      video: { status: videoNode.status, message: videoNode.message, outputs: videoNode.outputs },
+    };
+  }, base);
+
+  check('Tripo task completes', pipeline.tripo.status === 'done', `${pipeline.tripo.status}: ${pipeline.tripo.message}`);
+  check('Tripo returns a mesh', pipeline.tripo.outputs?.model?.type === 'model3d', JSON.stringify(pipeline.tripo.outputs?.model));
+  check('Tripo returns a rendered preview image', pipeline.tripo.outputs?.render?.type === 'image', JSON.stringify(pipeline.tripo.outputs?.render));
+  check('a local image is uploaded and sent as a file_token',
+    tripoLastBody?.file?.file_token === 'tok_abc' && tripoLastBody?.type === 'image_to_model',
+    JSON.stringify(tripoLastBody?.file));
+  check('the chosen Tripo model version is sent', tripoLastBody?.model_version === 'v3.1-20260211', String(tripoLastBody?.model_version));
+
+  check('Runway task completes', pipeline.video.status === 'done', `${pipeline.video.status}: ${pipeline.video.message}`);
+  check('Runway drives the video from the Tripo render',
+    typeof runwayLastBody?.promptImage === 'string' && runwayLastBody.promptImage.endsWith('/render.png'),
+    String(runwayLastBody?.promptImage));
+  check('Seedance 2.5 is the model sent to Runway', runwayLastBody?.model === 'seedance2_5', String(runwayLastBody?.model));
+  check('the prompt reaches Runway', runwayLastBody?.promptText === 'slow orbit, studio light', String(runwayLastBody?.promptText));
+  check('Runway output URL becomes a playable video',
+    pipeline.video.outputs?.video?.url?.endsWith('/tests/fixtures/clip.mp4'),
+    pipeline.video.outputs?.video?.url ?? 'none');
+
+  // 15. credential dropdowns are scoped per provider
+  const scoping = await page.evaluate(() => {
+    const labels = (type) => {
+      const card = document.querySelector(`.node[data-type="${type}"] select`);
+      return [...card.options].map((o) => o.textContent);
+    };
+    return { tripo: labels('tripo-3d'), runway: labels('runway-video') };
+  });
+  check('a Tripo node only offers Tripo keys',
+    scoping.tripo.some((t) => t.includes('tripo test')) && !scoping.tripo.some((t) => t.includes('runway test')),
+    scoping.tripo.join(' | '));
+  check('a Runway node only offers Runway keys',
+    scoping.runway.some((t) => t.includes('runway test')) && !scoping.runway.some((t) => t.includes('tripo test')),
+    scoping.runway.join(' | '));
+
+  // 16. a mesh-only blob URL cannot be sent to Runway, and says why
+  const blobRejected = await page.evaluate(async () => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const fake = store.addNode('text', { x: 0, y: 3200 }, { value: 'x' });
+    store.removeNode(fake.id);
+    const video = [...store.state.nodes.values()].find((n) => n.type === 'runway-video');
+    const original = video.outputs;
+    const image = store.addNode('image-input', { x: 0, y: 3200 }, { url: 'blob:http://localhost/abc' });
+    const edge = store.addEdge({ node: image.id, port: 'image' }, { node: video.id, port: 'image' });
+    await engine.run({ targets: [video.id], force: true });
+    const message = store.state.nodes.get(video.id).message;
+    store.removeEdge(edge.edge.id);
+    store.removeNode(image.id);
+    video.outputs = original;
+    return message;
+  });
+  check('a page-local blob image is refused with an explanation', /public URL or a data URL/.test(blobRejected), blobRejected);
+
   // The revoked-key check above deliberately provokes a 401, and Chromium logs
   // every failed request to the console; that one is expected.
   // Two checks above deliberately provoke network failures (a revoked key, a
   // server that is not running) and the viewer CDN is unreachable offline.
   // Chromium logs each as a resource notice; real script errors arrive through
   // the 'pageerror' handler instead and are never filtered here.
-  const expectedNoise = /status of 401|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|cdn\.jsdelivr|model-viewer/;
+  const expectedNoise = /status of 401|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
   const unexpected = consoleErrors.filter((text) => !expectedNoise.test(text));
   check('no unexpected console errors during the whole run', unexpected.length === 0, unexpected.join(' | '));
 } finally {

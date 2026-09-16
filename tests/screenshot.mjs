@@ -34,21 +34,23 @@ await page.waitForFunction(() => window.nodeSpace !== undefined);
 await page.evaluate(() => {
   const { store, keystore, canvas } = window.nodeSpace;
   store.clearAll();
-  keystore.save({ label: 'OpenRouter', value: 'sk-or-v1-demo-placeholder', provider: 'openrouter' });
-  const id = keystore.defaultFor('openrouter');
-  const prompt = store.addNode('text', { x: 40, y: 80 }, {
-    value: 'A slow dolly through a neon-lit alley after rain, steam rising, cinematic.',
-  });
-  const video = store.addNode('or-video', { x: 380, y: 40 }, { credential: id });
-  const preview = store.addNode('preview', { x: 740, y: 120 });
-  store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
-  store.addEdge({ node: video.id, port: 'video' }, { node: preview.id, port: 'value' });
+  keystore.save({ label: 'Tripo', value: 'tripo-demo-placeholder', provider: 'tripo' });
+  keystore.save({ label: 'Runway', value: 'runway-demo-placeholder', provider: 'runway' });
 
-  const image = store.addNode('image-input', { x: 40, y: 640 }, { url: 'https://example.com/product-shot.png' });
-  const mesh = store.addNode('hy3d', { x: 380, y: 600 });
-  const meshPreview = store.addNode('preview', { x: 740, y: 680 });
-  store.addEdge({ node: image.id, port: 'image' }, { node: mesh.id, port: 'image' });
-  store.addEdge({ node: mesh.id, port: 'model' }, { node: meshPreview.id, port: 'value' });
+  const image = store.addNode('image-input', { x: 40, y: 220 }, { url: 'https://example.com/armor-torso.png' });
+  const tripo = store.addNode('tripo-3d', { x: 360, y: 60 }, { credential: keystore.defaultFor('tripo') });
+  const meshPreview = store.addNode('preview', { x: 700, y: 60 });
+  const prompt = store.addNode('text', { x: 360, y: 700 }, {
+    value: 'slow orbit around the subject, even studio lighting, no camera shake',
+  });
+  const video = store.addNode('runway-video', { x: 700, y: 420 }, { credential: keystore.defaultFor('runway') });
+  const videoPreview = store.addNode('preview', { x: 1040, y: 420 });
+
+  store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'image' });
+  store.addEdge({ node: tripo.id, port: 'model' }, { node: meshPreview.id, port: 'value' });
+  store.addEdge({ node: tripo.id, port: 'render' }, { node: video.id, port: 'image' });
+  store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
+  store.addEdge({ node: video.id, port: 'video' }, { node: videoPreview.id, port: 'value' });
   canvas.fitView();
 });
 await page.waitForTimeout(400);

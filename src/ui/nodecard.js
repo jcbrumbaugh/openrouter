@@ -164,9 +164,15 @@ function buildField(field, ctx) {
 
     case 'credential': {
       const rebuild = () => {
-        const options = keystore.list();
+        // A node that names a provider only offers that provider's keys, so a
+        // Runway key cannot be handed to Tripo by accident.
+        const all = keystore.list();
+        const options = field.provider ? all.filter((c) => c.provider === field.provider) : all;
         clear(input);
-        input.append(h('option', { value: '' }, options.length ? 'select a key...' : 'no keys yet'));
+        const empty = field.provider
+          ? `no ${field.provider} key yet`
+          : 'no keys yet';
+        input.append(h('option', { value: '' }, options.length ? 'select a key...' : empty));
         for (const cred of options) {
           input.append(h('option', { value: cred.id }, `${cred.label} (${keystore.mask(cred.id)})`));
         }

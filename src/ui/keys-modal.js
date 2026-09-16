@@ -14,6 +14,8 @@ export function createKeysModal(container, { keystore, getBaseUrl = () => '' }) 
     { class: 'field-input' },
     [
       h('option', { value: 'openrouter' }, 'OpenRouter'),
+      h('option', { value: 'tripo' }, 'Tripo'),
+      h('option', { value: 'runway' }, 'Runway'),
       h('option', { value: 'other' }, 'Other / custom API'),
     ],
   );
@@ -52,7 +54,7 @@ export function createKeysModal(container, { keystore, getBaseUrl = () => '' }) 
                 status.textContent = 'Saved, but OpenRouter keys normally start with "sk-or-" - double-check you copied the whole thing.';
               }
               keystore.save({
-                label: labelInput.value.trim() || 'OpenRouter key',
+                label: labelInput.value.trim() || `${providerInput.value} key`,
                 value,
                 provider: providerInput.value,
               });
@@ -101,7 +103,7 @@ export function createKeysModal(container, { keystore, getBaseUrl = () => '' }) 
   // spending credit or involving a model.
   async function testKey(cred, target, button) {
     if (cred.provider !== 'openrouter') {
-      target.textContent = 'Test only works for OpenRouter keys.';
+      target.textContent = 'Test currently only checks OpenRouter keys.';
       target.className = 'key-verdict warn';
       return;
     }

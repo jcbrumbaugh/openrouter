@@ -108,7 +108,10 @@ in memory as a data URL, or a pasted URL).
   image modality.
 - `Video (Seedance)` — see below.
 
-**3D** — `Hunyuan3D 2.1` turns an image into a textured mesh. See below.
+**3D** — `Tripo 3D` (hosted) and `Hunyuan3D 2.1` (self-hosted) turn an image
+into a textured mesh. See below.
+
+**Runway** — `Runway Video` drives image-to-video, including Seedance.
 
 **Output** — `Preview` renders whatever it is handed: text, JSON, an image, a
 playable video, or a 3D mesh you can orbit.
@@ -147,7 +150,75 @@ with an `Extract` node (`Find video URL` mode handles most shapes). The three
 outputs are `Video` (plays in a Preview), `URL` (plain text), and `JSON` (the
 whole payload).
 
-## Hunyuan3D 2.1 (image to 3D)
+## The pipeline this is built around
+
+A still image becomes a mesh, and the mesh's rendered preview drives a video you
+can use as animation reference:
+
+```
+Image -> Tripo 3D -> Model  -> Preview      (orbit the mesh, download .glb)
+                  \-> Render -> Runway Video -> Preview   (with a Text prompt)
+```
+
+Tripo returns a `rendered_image` alongside the mesh, so the video step needs no
+manual screenshot — the render port feeds Runway directly. That is the graph the
+**Starter** button builds.
+
+## Running the gateway (required for Tripo and Runway)
+
+OpenRouter serves CORS headers, so the page calls it directly. **Tripo and
+Runway do not** — Runway's own SDK refuses to run in a browser at all — so those
+two go through the small gateway in `scripts/proxy.mjs`:
+
+```bash
+npm run proxy
+```
+
+```
+http://localhost:8787/openrouter/... -> https://openrouter.ai/...
+http://localhost:8787/tripo/...      -> https://api.tripo3d.ai/...
+http://localhost:8787/runway/...     -> https://api.dev.runwayml.com/...
+```
+
+The Tripo and Runway nodes already default to those addresses. Keys still come
+from your browser unless you put them in the environment instead
+(`TRIPO_API_KEY`, `RUNWAYML_API_SECRET`, `OPENROUTER_API_KEY`), in which case the
+gateway fills them in. It also adds Runway's required `X-Runway-Version` header.
+
+Because the gateway is plain `http://localhost`, **run the app locally for these
+two nodes**. Chrome tolerates an HTTPS page calling `http://localhost`; Safari
+does not, so the GitHub Pages copy is OpenRouter-only in Safari.
+
+## Tripo (hosted image to 3D)
+
+Get a key at [platform.tripo3d.ai](https://platform.tripo3d.ai), add it under
+**Keys** with provider *Tripo*, and pick it on the node — provider-scoped
+dropdowns mean a Runway key never shows up in a Tripo slot.
+
+The node posts `image_to_model` to `/v2/openapi/task` and polls `/task/{id}`
+until the status is `success`. A local upload is pushed through `/upload` first
+and referenced by token; a public image URL is passed straight through. Model
+versions run from `v2.5` up to `v3.1`, with Turbo for quick drafts. **Quad
+topology** is worth turning on if you plan to rig the result.
+
+Outputs: `Model` (the GLB), `Render` (Tripo's preview image), and the raw task
+JSON. Tripo's URLs are signed and expire, so download anything worth keeping.
+
+## Runway video (including Seedance)
+
+Runway routes third-party models, so Seedance is reachable there:
+`seedance2_5`, `seedance2`, `seedance2_fast`, `seedance2_mini`, alongside
+`gen4.5`, `gen4_turbo`, `veo3.1`, `hailuo3` and `wan3`. The node defaults to
+**Seedance 2.5**.
+
+It posts to `/v1/image_to_video` and polls `/v1/tasks/{id}` through
+`PENDING → RUNNING → SUCCEEDED`. Ratios are explicit pixel sizes
+(`1280:720`), durations are 4, 6 or 8 seconds. The image must be a public URL or
+a data URL — a mesh render from Tripo qualifies, a `blob:` URL that only exists
+inside the page does not, and the node says so rather than failing obscurely.
+Runway's output URLs expire too.
+
+## Hunyuan3D 2.1 (self-hosted image to 3D)
 
 [Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) is an
 open-source model, not a hosted service, so this node talks to a server **you**
@@ -265,12 +336,12 @@ index.html            shell: toolbar, palette, canvas, log
 start.command         double-click launcher for macOS
 styles.css            all styling (dark, CSS custom properties)
 src/core/             store (graph state), engine (topo run + cache), types
-src/nodes/            registry + node definitions (core, openrouter, hunyuan3d)
-src/providers/        openrouter client, credential keystore
+src/nodes/            registry + node definitions (core, openrouter, tripo, runway, hunyuan3d)
+src/providers/        openrouter, tripo, runway clients + credential keystore
 src/ui/               canvas/wires, node cards, palette, keys modal, log
 src/util/             dom helpers, response extraction, media conversion
 scripts/serve.mjs     local dev server
-scripts/proxy.mjs     optional local proxy
+scripts/proxy.mjs     local gateway for Tripo/Runway (and optionally OpenRouter)
 tests/                headless smoke test and screenshot tool
 ```
 

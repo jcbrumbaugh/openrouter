@@ -4,6 +4,8 @@ import { createRegistry } from './nodes/registry.js';
 import { registerCoreNodes } from './nodes/core-nodes.js';
 import { registerOpenRouterNodes } from './nodes/openrouter-nodes.js';
 import { registerHunyuan3dNodes } from './nodes/hunyuan3d-nodes.js';
+import { registerTripoNodes } from './nodes/tripo-nodes.js';
+import { registerRunwayNodes } from './nodes/runway-nodes.js';
 import { createStore } from './core/store.js';
 import { createEngine } from './core/engine.js';
 import { createKeystore } from './providers/keystore.js';
@@ -20,6 +22,8 @@ const registry = createRegistry();
 registerCoreNodes(registry);
 registerOpenRouterNodes(registry);
 registerHunyuan3dNodes(registry);
+registerTripoNodes(registry);
+registerRunwayNodes(registry);
 
 const keystore = createKeystore();
 const store = createStore(registry);
@@ -115,15 +119,26 @@ function download(filename, text) {
 }
 
 function starterGraph() {
-  const prompt = store.addNode('text', { x: 60, y: 120 }, {
-    value: 'A slow dolly shot through a neon-lit alley after rain, steam rising, cinematic.',
+  // The pipeline this app was built around: a still image becomes a mesh, and
+  // Tripo's rendered preview of that mesh drives a video for animation reference.
+  const image = store.addNode('image-input', { x: 40, y: 200 });
+  const tripo = store.addNode('tripo-3d', { x: 360, y: 60 }, {
+    credential: keystore.defaultFor('tripo'),
   });
-  const video = store.addNode('or-video', { x: 400, y: 80 }, {
-    credential: keystore.defaultFor('openrouter'),
+  const meshPreview = store.addNode('preview', { x: 700, y: 60 });
+  const prompt = store.addNode('text', { x: 360, y: 640 }, {
+    value: 'slow orbit around the subject, even studio lighting, no camera shake',
   });
-  const preview = store.addNode('preview', { x: 760, y: 140 });
+  const video = store.addNode('runway-video', { x: 700, y: 420 }, {
+    credential: keystore.defaultFor('runway'),
+  });
+  const videoPreview = store.addNode('preview', { x: 1040, y: 420 });
+
+  store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'image' });
+  store.addEdge({ node: tripo.id, port: 'model' }, { node: meshPreview.id, port: 'value' });
+  store.addEdge({ node: tripo.id, port: 'render' }, { node: video.id, port: 'image' });
   store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
-  store.addEdge({ node: video.id, port: 'video' }, { node: preview.id, port: 'value' });
+  store.addEdge({ node: video.id, port: 'video' }, { node: videoPreview.id, port: 'value' });
 }
 
 function boot() {
@@ -139,7 +154,7 @@ function boot() {
     }
   }
   starterGraph();
-  log('Loaded the Seedance starter graph. Add your OpenRouter key under "Keys".');
+  log('Loaded the image -> 3D -> video starter graph. Add your keys under "Keys", and start the gateway with "npm run proxy".');
 }
 
 // ---- toolbar -------------------------------------------------------------
@@ -195,7 +210,7 @@ document.getElementById('clear').addEventListener('click', () => {
 document.getElementById('starter').addEventListener('click', () => {
   starterGraph();
   canvas.fitView();
-  log('added the Seedance starter chain');
+  log('added the image -> 3D -> video chain');
 });
 
 window.addEventListener('keydown', (event) => {
