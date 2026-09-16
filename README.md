@@ -236,6 +236,13 @@ The file is named from what actually arrived (`.glb`, `.fbx`, `.obj`, `.zip`,
 `.usdc`…), the log reports it, and a format the browser cannot render says so
 instead of failing in the viewer.
 
+The viewer library itself is fetched once and never cached as failed: a blocked
+or flaky load is retried by the next preview rather than leaving every node for
+the rest of the session claiming no viewer is available. Viewers also load
+eagerly, because the default defers until the element is judged on screen and
+that judgement is unreliable for nodes sitting in a pan/zoom canvas's
+transformed layer.
+
 For a real glTF the log also reports its version and any extension needing a
 decoder fetched at runtime (`KHR_draco_mesh_compression`,
 `EXT_meshopt_compression`, `KHR_texture_basisu`); if the viewer then fails, the

@@ -799,7 +799,64 @@ try {
   check('it names the 502 and whose fault it is', /502 Bad Gateway/.test(createFailed) && /Tripo's side/.test(createFailed), createFailed.slice(0, 200));
   check('it says nothing was charged', /not charged/.test(createFailed), createFailed.slice(0, 200));
 
-  // 22. credential dropdowns are scoped per provider
+  // 22. a mesh flows into a downstream Preview node and mounts a viewer there.
+  // The real <model-viewer> comes from a CDN, which is unreachable here, so an
+  // earlier preview in this very run has already failed to load it - which makes
+  // this a regression test for two things at once: that a downstream Preview
+  // renders a mesh at all, and that one failed load does not poison every
+  // preview afterwards.
+  await page.evaluate(() => {
+    if (!customElements.get('model-viewer')) {
+      customElements.define('model-viewer', class extends HTMLElement {});
+    }
+  });
+  const previewed = await page.evaluate(async () => {
+    const { store, engine, registry } = window.nodeSpace;
+    const glb = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 80, 0, 0, 0]);
+    const url = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+    const value = { type: 'model3d', url, name: 'probe.glb', previewable: true, format: 'binary glTF' };
+    if (!registry.get('fake-mesh')) {
+      registry.register({
+        type: 'fake-mesh',
+        title: 'Fake Mesh',
+        category: 'Test',
+        accent: '#ffffff',
+        inputs: [],
+        outputs: [{ id: 'model', label: 'Model', type: 'model3d' }],
+        fields: [{ id: '_result', kind: 'preview', label: '' }],
+        defaults: {},
+        cacheable: false,
+        run({ setData }) {
+          setData({ _result: value });
+          return { model: value };
+        },
+      });
+    }
+    const source = store.addNode('fake-mesh', { x: 40, y: 5000 });
+    const preview = store.addNode('preview', { x: 420, y: 5000 });
+    store.addEdge({ node: source.id, port: 'model' }, { node: preview.id, port: 'value' });
+    await engine.run({ targets: [preview.id], force: true });
+
+    const card = document.querySelector(`.node[data-node-id="${preview.id}"]`);
+    const viewer = card?.querySelector('model-viewer');
+    return {
+      status: store.state.nodes.get(preview.id).status,
+      gotValue: store.state.nodes.get(preview.id).data._preview?.type ?? null,
+      hasViewer: Boolean(viewer),
+      src: viewer?.getAttribute('src') ?? null,
+      loading: viewer?.getAttribute('loading') ?? null,
+      hasDownload: Boolean(card?.querySelector('a[download]')),
+    };
+  });
+  check('a Preview node downstream of a mesh runs', previewed.status === 'done', previewed.status);
+  check('the mesh actually reaches the Preview node', previewed.gotValue === 'model3d', String(previewed.gotValue));
+  check('the Preview node mounts a viewer', previewed.hasViewer === true, JSON.stringify(previewed));
+  check('the viewer points at the mesh', previewed.src?.startsWith('blob:'), previewed.src ?? 'none');
+  check('the viewer loads eagerly, not when it thinks it is on screen',
+    previewed.loading === 'eager', String(previewed.loading));
+  check('the Preview node still offers a download', previewed.hasDownload === true, JSON.stringify(previewed));
+
+  // 23. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

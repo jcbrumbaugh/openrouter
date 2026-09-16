@@ -12,16 +12,24 @@ const MODEL_VIEWER_SRC = 'https://cdn.jsdelivr.net/npm/@google/model-viewer@4.0.
 let modelViewerPromise = null;
 
 function loadModelViewer() {
+  // Already available (loaded earlier, or provided some other way).
+  if (customElements.get('model-viewer')) return Promise.resolve();
   if (modelViewerPromise) return modelViewerPromise;
+
   modelViewerPromise = new Promise((resolve, reject) => {
-    if (customElements.get('model-viewer')) {
-      resolve();
-      return;
-    }
     const script = h('script', { type: 'module', src: MODEL_VIEWER_SRC });
     script.addEventListener('load', () => resolve());
-    script.addEventListener('error', () => reject(new Error('viewer script could not be loaded')));
+    script.addEventListener('error', () => {
+      script.remove();
+      reject(new Error('viewer script could not be loaded'));
+    });
     document.head.append(script);
+  });
+
+  // Never cache a failure: one blocked or flaky fetch would otherwise leave
+  // every preview for the rest of the session showing "no viewer available".
+  modelViewerPromise.catch(() => {
+    modelViewerPromise = null;
   });
   return modelViewerPromise;
 }
@@ -67,6 +75,12 @@ function renderModel3d(value) {
         'touch-action': 'pan-y',
         'shadow-intensity': '1',
         exposure: '1',
+        // Load immediately. The default defers until the element is judged to be
+        // on screen, and that judgement is unreliable inside a pan/zoom canvas
+        // whose nodes sit in a CSS-transformed layer: a node parked off to one
+        // side would mount a viewer that never loaded anything.
+        loading: 'eager',
+        reveal: 'auto',
       });
       // A mesh served straight from a provider CDN usually fails here on CORS;
       // say so rather than showing an empty box.
