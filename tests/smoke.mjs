@@ -633,7 +633,51 @@ try {
   check('the copy keeps its settings', duplicated.copiedSettings === true, JSON.stringify(duplicated));
   check('the copy sits beside the original with no stale result', duplicated.offset && duplicated.freshResult, JSON.stringify(duplicated));
 
-  // 18. credential dropdowns are scoped per provider
+  // 18. the polygon budget slider drives face_limit
+  const slider = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const image = store.addNode('image-input', { x: -300, y: 3900 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgo=', name: 'p.png', mime: 'image/png' },
+    });
+    const tripo = store.addNode('tripo-3d', { x: 40, y: 3900 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'front' });
+    store.select(tripo.id);
+    window.nodeSpace.canvas.fitView();
+    await new Promise((r) => setTimeout(r, 150));
+
+    const el = document.querySelector(`.node[data-node-id="${tripo.id}"] input[type="range"]`);
+    const readoutAtZero = el.parentElement.querySelector('.field-readout').textContent;
+    el.value = '40000';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    const readoutAfter = el.parentElement.querySelector('.field-readout').textContent;
+
+    await engine.run({ targets: [tripo.id], force: true });
+    return {
+      readoutAtZero,
+      readoutAfter,
+      stored: store.state.nodes.get(tripo.id).data.faceLimit,
+      status: store.state.nodes.get(tripo.id).status,
+    };
+  }, base);
+  check('the slider reads "auto" at zero', slider.readoutAtZero === 'auto', slider.readoutAtZero);
+  check('the slider shows a formatted count when moved', slider.readoutAfter === '40,000', slider.readoutAfter);
+  check('the slider value is stored on the node', slider.stored === 40000, String(slider.stored));
+  check('the slider run completes', slider.status === 'done', slider.status);
+  check('the slider sends face_limit to Tripo', tripoLastBody?.face_limit === 40000, String(tripoLastBody?.face_limit));
+  check('a zero budget sends no face_limit at all', await page.evaluate(async () => {
+    const { store, engine } = window.nodeSpace;
+    const tripo = [...store.state.nodes.values()].reverse().find((n) => n.type === 'tripo-3d');
+    store.updateNodeData(tripo.id, { faceLimit: 0 });
+    await engine.run({ targets: [tripo.id], force: true });
+    return store.state.nodes.get(tripo.id).status === 'done';
+  }) && tripoLastBody?.face_limit === undefined, JSON.stringify(tripoLastBody?.face_limit));
+
+  // 19. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

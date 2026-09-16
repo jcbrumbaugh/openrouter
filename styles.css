@@ -239,6 +239,17 @@ button.danger:hover:not(:disabled) { border-color: #6b3434; background: #2a1c1c;
 .field-input:focus { outline: none; border-color: var(--accent); }
 textarea.field-input { font-family: var(--mono); font-size: 12px; line-height: 1.45; }
 .field-row { display: flex; gap: 6px; align-items: center; }
+.field-slider { display: flex; gap: 8px; align-items: center; }
+.field-range { flex: 1; min-width: 0; accent-color: var(--accent); }
+.field-readout {
+  flex: 0 0 auto;
+  min-width: 56px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 .field-row .field-input { flex: 1; min-width: 0; }
 .field-check { display: flex; align-items: center; gap: 6px; }
 .field-note { font-size: 11px; color: var(--text-dim); margin-top: 3px; word-break: break-all; }

@@ -117,6 +117,18 @@ it.
 
 ---
 
+## Getting updates
+
+**Double-click `update.command`** in the project folder. It downloads the latest
+version, lists what changed, and tells you when it is done. It never touches
+your keys, your exported graphs or anything in `my-work`.
+
+Then double-click `start.command` as usual, and once the app opens press
+`Command + Shift + R` — that forces the browser to load the new version instead
+of the copy it remembered.
+
+---
+
 ## Getting more out of it
 
 **Use several photos of the same object.** The Tripo node has four image inputs:
@@ -126,6 +138,11 @@ it. Front alone still works.
 
 **Try variations.** Click a node and press `Cmd+D` to duplicate it. Change the
 Seed on the copy, then Run. Two versions sit side by side for comparison.
+
+**Set a polygon budget.** The Tripo node has a *Polygon budget* slider. Left at
+`auto` Tripo decides. Moving it caps how many faces the mesh has, which matters
+if the model is going into a game engine or onto the web. It does not change
+what a generation costs.
 
 **Do more with a finished mesh.** Drag from the Tripo node's **Task** dot into a
 **Tripo Refine** node to export a different file format (FBX for Blender, USDZ

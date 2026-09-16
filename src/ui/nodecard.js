@@ -135,6 +135,7 @@ function buildField(field, ctx) {
   let input = null;
   let body;
   let unsubscribe = null;
+  let afterSync = null;
 
   const commit = (next) => store.updateNodeData(node.id, { [field.id]: next });
 
@@ -162,6 +163,33 @@ function buildField(field, ctx) {
       input.value = value ?? '';
       body = input;
       break;
+
+    case 'range': {
+      const readout = h('span', { class: 'field-readout' });
+      const label = (raw) => {
+        const n = Number(raw) || 0;
+        if (n <= (field.min ?? 0)) return field.zeroLabel ?? String(field.min ?? 0);
+        return n.toLocaleString();
+      };
+      input = h('input', {
+        class: 'field-range',
+        type: 'range',
+        min: field.min ?? 0,
+        max: field.max ?? 100,
+        step: field.step ?? 1,
+        oninput: (e) => {
+          readout.textContent = label(e.target.value);
+          commit(Number(e.target.value));
+        },
+      });
+      input.value = value ?? field.min ?? 0;
+      readout.textContent = label(input.value);
+      afterSync = () => {
+        readout.textContent = label(node.data[field.id]);
+      };
+      body = h('div', { class: 'field-slider' }, [input, readout]);
+      break;
+    }
 
     case 'checkbox':
       input = h('input', { type: 'checkbox', onchange: (e) => commit(e.target.checked) });
@@ -298,6 +326,7 @@ function buildField(field, ctx) {
       if (!input || document.activeElement === input) return;
       if (field.kind === 'checkbox') input.checked = Boolean(current);
       else input.value = current ?? '';
+      afterSync?.();
     },
   };
 }

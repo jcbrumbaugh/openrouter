@@ -241,6 +241,15 @@ task against that same mesh:
   text prompt, with its own seed.
 - **Stylize** — lego, voxel, voronoi or minecraft.
 
+### Polygon budget
+
+The **Polygon budget** slider maps to Tripo's `face_limit`. At `auto` (zero) the
+parameter is omitted entirely and Tripo decides; anything higher caps the face
+count. It is a post-generation decimation setting, so it does not change what a
+generation costs — only what you get back. Tripo's credit cost is driven by task
+type and the texture options (turning texture off is cheaper, `detailed` texture
+quality costs more).
+
 ### Iterating
 
 Two ways to try variations:
