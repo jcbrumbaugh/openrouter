@@ -43,6 +43,12 @@ await page.evaluate(() => {
   const preview = store.addNode('preview', { x: 740, y: 120 });
   store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
   store.addEdge({ node: video.id, port: 'video' }, { node: preview.id, port: 'value' });
+
+  const image = store.addNode('image-input', { x: 40, y: 640 }, { url: 'https://example.com/product-shot.png' });
+  const mesh = store.addNode('hy3d', { x: 380, y: 600 });
+  const meshPreview = store.addNode('preview', { x: 740, y: 680 });
+  store.addEdge({ node: image.id, port: 'image' }, { node: mesh.id, port: 'image' });
+  store.addEdge({ node: mesh.id, port: 'model' }, { node: meshPreview.id, port: 'value' });
   canvas.fitView();
 });
 await page.waitForTimeout(400);

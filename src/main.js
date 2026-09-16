@@ -3,6 +3,7 @@
 import { createRegistry } from './nodes/registry.js';
 import { registerCoreNodes } from './nodes/core-nodes.js';
 import { registerOpenRouterNodes } from './nodes/openrouter-nodes.js';
+import { registerHunyuan3dNodes } from './nodes/hunyuan3d-nodes.js';
 import { createStore } from './core/store.js';
 import { createEngine } from './core/engine.js';
 import { createKeystore } from './providers/keystore.js';
@@ -18,6 +19,7 @@ const AUTOSAVE_KEY = 'nodespace.graph.v1';
 const registry = createRegistry();
 registerCoreNodes(registry);
 registerOpenRouterNodes(registry);
+registerHunyuan3dNodes(registry);
 
 const keystore = createKeystore();
 const store = createStore(registry);

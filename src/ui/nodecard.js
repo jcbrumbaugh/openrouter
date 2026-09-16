@@ -3,6 +3,60 @@
 import { clear, h } from '../util/dom.js';
 import { PORT_COLORS } from '../core/types.js';
 
+// <model-viewer> is the one external dependency in the app, and it is fetched
+// lazily: nothing loads from a CDN unless a 3D result actually appears. If the
+// fetch fails (offline, blocked, strict CSP) the preview falls back to a
+// download link rather than breaking the node.
+const MODEL_VIEWER_SRC = 'https://cdn.jsdelivr.net/npm/@google/model-viewer@4.0.0/dist/model-viewer.min.js';
+let modelViewerPromise = null;
+
+function loadModelViewer() {
+  if (modelViewerPromise) return modelViewerPromise;
+  modelViewerPromise = new Promise((resolve, reject) => {
+    if (customElements.get('model-viewer')) {
+      resolve();
+      return;
+    }
+    const script = h('script', { type: 'module', src: MODEL_VIEWER_SRC });
+    script.addEventListener('load', () => resolve());
+    script.addEventListener('error', () => reject(new Error('viewer script could not be loaded')));
+    document.head.append(script);
+  });
+  return modelViewerPromise;
+}
+
+function renderModel3d(value) {
+  const links = h('div', { class: 'model-links' }, [
+    h('a', { class: 'media-link', href: value.url, download: value.name ?? 'model.glb' }, 'download .glb'),
+    h('a', { class: 'media-link', href: value.url, target: '_blank', rel: 'noreferrer' }, 'open'),
+  ]);
+  const stage = h('div', { class: 'model-stage' }, [h('span', { class: 'model-note' }, 'loading 3D viewer...')]);
+  const wrap = h('div', { class: 'preview' }, [stage, links]);
+
+  loadModelViewer()
+    .then(() => {
+      clear(stage);
+      const viewer = h('model-viewer', {
+        src: value.url,
+        alt: '3D model',
+        'camera-controls': true,
+        'auto-rotate': true,
+        'touch-action': 'pan-y',
+        'shadow-intensity': '1',
+        exposure: '1',
+      });
+      stage.append(viewer);
+    })
+    .catch(() => {
+      clear(stage);
+      stage.append(
+        h('span', { class: 'model-note' }, 'No inline viewer available here - use the download link (macOS previews .glb with Quick Look).'),
+      );
+    });
+
+  return wrap;
+}
+
 const STATUS_LABEL = {
   idle: '',
   running: 'running',
@@ -34,6 +88,9 @@ export function renderPreview(value) {
       h('video', { class: 'media', src: value.url, controls: true, playsinline: true, preload: 'metadata' }),
       h('a', { class: 'media-link', href: value.url, target: '_blank', rel: 'noreferrer' }, 'open video'),
     ]);
+  }
+  if (typeof value === 'object' && value.type === 'model3d' && value.url) {
+    return renderModel3d(value);
   }
   if (typeof value === 'object' && value.type === 'image' && value.url) {
     return h('div', { class: 'preview' }, [

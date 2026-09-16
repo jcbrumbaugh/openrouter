@@ -108,8 +108,10 @@ in memory as a data URL, or a pasted URL).
   image modality.
 - `Video (Seedance)` — see below.
 
-**Output** — `Preview` renders whatever it is handed: text, JSON, an image, or a
-playable video.
+**3D** — `Hunyuan3D 2.1` turns an image into a textured mesh. See below.
+
+**Output** — `Preview` renders whatever it is handed: text, JSON, an image, a
+playable video, or a 3D mesh you can orbit.
 
 ## The Seedance video node
 
@@ -144,6 +146,44 @@ came back, then either adjust the paths under **Advanced** or pull the URL out
 with an `Extract` node (`Find video URL` mode handles most shapes). The three
 outputs are `Video` (plays in a Preview), `URL` (plain text), and `JSON` (the
 whole payload).
+
+## Hunyuan3D 2.1 (image to 3D)
+
+[Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) is an
+open-source model, not a hosted service, so this node talks to a server **you**
+run. The repo ships a FastAPI app for exactly that:
+
+```bash
+python api_server.py --port 8081
+```
+
+Point the node's **Server URL** at it (`http://localhost:8081` by default) and
+wire an `Image` node into its input. That server sets
+`allow_origins=["*"]`, so the browser is allowed to call it directly — no proxy
+needed. The node speaks its real contract: `POST /send` to queue a job, then
+`GET /status/{uid}` until the status turns `completed`, which carries the mesh
+back as base64. Switch **Call style** to `/generate` for a single blocking
+request that returns the GLB directly.
+
+**Hardware.** Their README quotes 10 GB VRAM for shape generation, 21 GB for
+texture, and 29 GB for both, on CUDA. That means an NVIDIA GPU — a Mac cannot
+run it locally, Apple Silicon included. Realistic options are a rented cloud GPU
+(RunPod, Vast.ai, Lambda), a desktop with a large NVIDIA card, or a hosted
+Hunyuan3D endpoint driven through the `HTTP Request` node. Leave **Generate PBR
+texture** off to stay in the 10 GB lane.
+
+**Reaching a remote server.** If the box is not the machine running the browser,
+put its address in Server URL. One catch: a page served over HTTPS (GitHub
+Pages) may not call a plain `http://` address — browsers treat that as mixed
+content. `http://localhost` is exempt in Chrome, a remote IP is not. So for a
+remote GPU box, either run this app locally over `http://`, or terminate TLS in
+front of the Hunyuan3D server.
+
+The mesh arrives as a `blob:` URL held in memory for the session: the Preview
+node orbits it, and the download link saves a `.glb`. The inline viewer is the
+app's only external dependency, `<model-viewer>`, fetched from a CDN the first
+time a mesh appears and never before. If it cannot load, the download link is
+still there — macOS previews `.glb` with Quick Look.
 
 ## Plugging in your other APIs
 
@@ -225,10 +265,10 @@ index.html            shell: toolbar, palette, canvas, log
 start.command         double-click launcher for macOS
 styles.css            all styling (dark, CSS custom properties)
 src/core/             store (graph state), engine (topo run + cache), types
-src/nodes/            registry + node definitions (core, openrouter)
+src/nodes/            registry + node definitions (core, openrouter, hunyuan3d)
 src/providers/        openrouter client, credential keystore
 src/ui/               canvas/wires, node cards, palette, keys modal, log
-src/util/             dom helpers, response extraction + templating
+src/util/             dom helpers, response extraction, media conversion
 scripts/serve.mjs     local dev server
 scripts/proxy.mjs     optional local proxy
 tests/                headless smoke test and screenshot tool

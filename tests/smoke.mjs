@@ -17,7 +17,13 @@ const MIME = {
 };
 
 let pollCount = 0;
+let hy3dPolls = 0;
 const apiCalls = [];
+
+// A minimal stand-in for Hunyuan3D's api_server.py: POST /send returns a uid,
+// GET /status/{uid} reports processing -> texturing -> completed with the mesh
+// as base64, exactly as the real server does.
+const FAKE_GLB = Buffer.from('glTF fake binary payload for tests').toString('base64');
 
 function mockApi(req, res, url, body, origin) {
   const json = (status, payload) => {
@@ -26,6 +32,22 @@ function mockApi(req, res, url, body, origin) {
   };
   apiCalls.push(`${req.method} ${url.pathname}`);
 
+  if (url.pathname === '/hy3d/send' && req.method === 'POST') {
+    if (!body?.image?.startsWith('data:image/')) {
+      return json(400, { message: 'image must be a base64 data URL' });
+    }
+    hy3dPolls = 0;
+    return json(200, { uid: 'mesh_1' });
+  }
+  if (url.pathname === '/hy3d/status/mesh_1' && req.method === 'GET') {
+    hy3dPolls += 1;
+    if (hy3dPolls === 1) return json(200, { status: 'processing' });
+    if (hy3dPolls === 2) return json(200, { status: 'texturing' });
+    return json(200, { status: 'completed', model_base64: FAKE_GLB });
+  }
+  if (url.pathname === '/hy3d/status/missing') {
+    return json(200, { status: 'error', message: 'out of VRAM' });
+  }
   if (url.pathname === '/api/v1/key') {
     if (req.headers.authorization === 'Bearer sk-or-v1-testkey') {
       return json(200, { data: { label: 'test key', usage: 0.42, limit: 10 } });
@@ -85,7 +107,7 @@ function startServer() {
   const server = http.createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const url = new URL(req.url, origin);
-    if (url.pathname.startsWith('/api/')) {
+    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/hy3d/')) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       let body = null;
@@ -297,9 +319,79 @@ try {
     if (c.label === 'revoked key') window.nodeSpace.keystore.remove(c.id);
   }));
 
+  // 13. Hunyuan3D: image in, mesh out, against a mock of its real API
+  const meshResult = await page.evaluate(async (baseUrl) => {
+    const { store, engine } = window.nodeSpace;
+    const image = store.addNode('image-input', { x: 0, y: 1600 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', name: 'in.png', mime: 'image/png' },
+    });
+    const hy3d = store.addNode('hy3d', { x: 320, y: 1600 }, {
+      serverUrl: `${baseUrl}/hy3d`,
+      pollSeconds: 1,
+      texture: true,
+    });
+    const preview = store.addNode('preview', { x: 640, y: 1600 });
+    store.addEdge({ node: image.id, port: 'image' }, { node: hy3d.id, port: 'image' });
+    store.addEdge({ node: hy3d.id, port: 'model' }, { node: preview.id, port: 'value' });
+    await engine.run({ targets: [preview.id], force: true });
+    const node = store.state.nodes.get(hy3d.id);
+    return {
+      status: node.status,
+      message: node.message,
+      model: node.outputs.model ?? null,
+      previewId: preview.id,
+    };
+  }, base);
+  check('Hunyuan3D node completes a submit + poll run', meshResult.status === 'done', `${meshResult.status}: ${meshResult.message}`);
+  check('Hunyuan3D emits a model3d value', meshResult.model?.type === 'model3d', JSON.stringify(meshResult.model));
+  check('the mesh is handed over as a blob URL', meshResult.model?.url?.startsWith('blob:'), meshResult.model?.url ?? 'none');
+  check('the mesh keeps a .glb filename', /\.glb$/.test(meshResult.model?.name ?? ''), meshResult.model?.name ?? 'none');
+  check('submit + both poll stages happened',
+    apiCalls.includes('POST /hy3d/send') && apiCalls.filter((c) => c === 'GET /hy3d/status/mesh_1').length >= 3,
+    apiCalls.filter((c) => c.includes('hy3d')).join(', '));
+
+  // The viewer script is a CDN module and the test runs offline, so the preview
+  // must still offer the mesh rather than showing nothing.
+  await page.evaluate(() => window.nodeSpace.canvas.fitView());
+  await page.waitForSelector('.model-links a[download]', { timeout: 10000 });
+  const download = await page.locator('.model-links a[download]').first().getAttribute('download');
+  check('3D preview offers a download even with no viewer', /\.glb$/.test(download ?? ''), download ?? 'none');
+
+  // port typing: a mesh is not an image
+  const meshTyping = await page.evaluate(() => {
+    const { store } = window.nodeSpace;
+    const hy3d = [...store.state.nodes.values()].find((n) => n.type === 'hy3d');
+    const chat = store.addNode('or-chat', { x: 0, y: 2000 });
+    const bad = store.addEdge({ node: hy3d.id, port: 'model' }, { node: chat.id, port: 'image' });
+    store.removeNode(chat.id);
+    return bad;
+  });
+  check('a mesh cannot be wired into an image input', meshTyping.ok === false, JSON.stringify(meshTyping));
+
+  // a server that is not running must say so in plain language
+  const offline = await page.evaluate(async () => {
+    const { store, engine } = window.nodeSpace;
+    const image = store.addNode('image-input', { x: 0, y: 2200 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgo=', name: 'x.png', mime: 'image/png' },
+    });
+    const hy3d = store.addNode('hy3d', { x: 320, y: 2200 }, { serverUrl: 'http://127.0.0.1:9999', pollSeconds: 1 });
+    store.addEdge({ node: image.id, port: 'image' }, { node: hy3d.id, port: 'image' });
+    await engine.run({ targets: [hy3d.id], force: true });
+    const message = store.state.nodes.get(hy3d.id).message;
+    store.removeNode(hy3d.id);
+    store.removeNode(image.id);
+    return message;
+  });
+  check('an unreachable Hunyuan3D server explains itself', /Could not reach the Hunyuan3D server/.test(offline), offline);
+
   // The revoked-key check above deliberately provokes a 401, and Chromium logs
   // every failed request to the console; that one is expected.
-  const unexpected = consoleErrors.filter((text) => !/status of 401/.test(text));
+  // Two checks above deliberately provoke network failures (a revoked key, a
+  // server that is not running) and the viewer CDN is unreachable offline.
+  // Chromium logs each as a resource notice; real script errors arrive through
+  // the 'pageerror' handler instead and are never filtered here.
+  const expectedNoise = /status of 401|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|cdn\.jsdelivr|model-viewer/;
+  const unexpected = consoleErrors.filter((text) => !expectedNoise.test(text));
   check('no unexpected console errors during the whole run', unexpected.length === 0, unexpected.join(' | '));
 } finally {
   await browser.close();
