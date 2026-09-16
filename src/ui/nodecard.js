@@ -310,6 +310,35 @@ function buildField(field, ctx) {
       body = h('div', {}, [input, node.data._file?.name ? h('div', { class: 'field-note' }, node.data._file.name) : null]);
       break;
 
+    case 'gallery': {
+      body = h('div', { class: 'gallery' });
+      const draw = () => {
+        clear(body);
+        const images = node.data._images ?? [];
+        if (!images.length) {
+          body.append(h('div', { class: 'preview empty' }, 'no variations yet - press Run'));
+          return;
+        }
+        const selected = node.data._selected ?? 0;
+        body.append(
+          h('div', { class: 'gallery-grid' }, images.map((src, index) => h(
+            'button',
+            {
+              class: `gallery-item${index === selected ? ' selected' : ''}`,
+              type: 'button',
+              title: `Use variation ${index + 1}`,
+              onclick: () => ctx.onPickVariation?.(node, index),
+            },
+            [h('img', { src, alt: `variation ${index + 1}` }), h('span', { class: 'gallery-index' }, String(index + 1))],
+          ))),
+        );
+        body.append(h('div', { class: 'field-note' }, `variation ${selected + 1} of ${images.length} feeds the next node`));
+      };
+      draw();
+      afterSync = draw;
+      break;
+    }
+
     case 'preview':
       body = renderPreview(value);
       break;
@@ -356,7 +385,11 @@ function buildField(field, ctx) {
         else if (name) el.append(h('div', { class: 'field-note' }, name));
         return;
       }
-      if (!input || document.activeElement === input) return;
+      if (!input) {
+        afterSync?.();
+        return;
+      }
+      if (document.activeElement === input) return;
       if (field.kind === 'checkbox') input.checked = Boolean(current);
       else input.value = current ?? '';
       afterSync?.();

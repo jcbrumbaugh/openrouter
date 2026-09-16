@@ -9,6 +9,21 @@ function stableStringify(value, depth = 0) {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k], depth + 1)}`).join(',')}}`;
 }
 
+// Presentation-only fields (a stored result, which variation is selected) must
+// not count towards the cache key, or picking a favourite would look like a
+// settings change and re-run a paid generation.
+const ALWAYS_IGNORED = ['_result', '_preview'];
+
+function cacheableData(data, def) {
+  const ignored = new Set(def.cacheIgnore ?? ALWAYS_IGNORED);
+  const out = {};
+  for (const [key, value] of Object.entries(data ?? {})) {
+    if (ignored.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 function hash(text) {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
@@ -92,7 +107,12 @@ export function createEngine(store, { keystore, log }) {
       }
     }
 
-    const key = hash(stableStringify({ data: node.data, inputs, type: node.type }));
+    const cacheKeyFor = () => hash(stableStringify({
+      data: cacheableData(node.data, def),
+      inputs,
+      type: node.type,
+    }));
+    const key = cacheKeyFor();
     const cacheable = def.cacheable !== false;
     if (!force && cacheable && node.cacheKey === key) {
       store.setNodeStatus(node.id, 'cached', 'reused last result');
@@ -114,7 +134,7 @@ export function createEngine(store, { keystore, log }) {
 
     const ms = Math.round(performance.now() - started);
     // setData inside run() clears cacheKey; recompute so caching still applies.
-    const finalKey = hash(stableStringify({ data: node.data, inputs, type: node.type }));
+    const finalKey = cacheKeyFor();
     store.setNodeOutputs(node.id, outputs, cacheable ? finalKey : null);
     store.setNodeStatus(node.id, 'done', `${ms} ms`);
     return outputs;

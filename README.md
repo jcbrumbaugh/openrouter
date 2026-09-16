@@ -281,6 +281,30 @@ Two ways to try variations:
 - **Seed 0** means random every run, so pressing **Force** re-rolls. A non-zero
   seed makes a run repeatable.
 
+## OpenAI images
+
+**A ChatGPT subscription does not cover this.** ChatGPT (Plus, Pro, Team) and the
+API are separate products with separate billing, and there is no supported way
+to authenticate API calls with a subscription. The key comes from
+[platform.openai.com](https://platform.openai.com/api-keys) and is charged per
+image, typically a few cents. Add it under **Keys** with provider *OpenAI*.
+
+The node runs `gpt-image-1` and returns **several variations per run** — set
+*Variations per run* from 1 to 4. Every variation appears as a thumbnail;
+clicking one makes it the node's `Picked` output, and that costs nothing extra:
+the selection is excluded from the cache key, so choosing a favourite re-uses
+the generation you already paid for instead of buying more. The `All` port
+carries every variation for anything that wants the set.
+
+Connect an image to **Source** and the node switches from `/images/generations`
+to `/images/edits`, sending your image as multipart — that is the path for
+"same thing, but battle-worn". The source has to be an uploaded file rather than
+a remote URL.
+
+Like Tripo and Runway, OpenAI sends no CORS headers, so this goes through the
+local gateway (`/openai`), which also picks up `OPENAI_API_KEY` from the
+environment if you would rather not keep the key in the browser.
+
 ## Runway video (including Seedance)
 
 Runway routes third-party models, so Seedance is reachable there:
@@ -433,7 +457,7 @@ start.command         double-click launcher for macOS
 styles.css            all styling (dark, CSS custom properties)
 src/core/             store (graph state), engine (topo run + cache), types
 src/nodes/            registry + node definitions (core, openrouter, tripo, runway, hunyuan3d)
-src/providers/        openrouter, tripo, runway clients + credential keystore
+src/providers/        openrouter, openai, tripo, runway clients + keystore
 src/ui/               canvas/wires, node cards, palette, keys modal, log
 src/util/             dom helpers, response extraction, media conversion
 scripts/serve.mjs     local dev server

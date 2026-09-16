@@ -31,6 +31,11 @@ const PROVIDERS = {
     key: () => process.env.TRIPO_API_KEY,
     headers: () => ({}),
   },
+  openai: {
+    upstream: process.env.OPENAI_UPSTREAM ?? 'https://api.openai.com',
+    key: () => process.env.OPENAI_API_KEY,
+    headers: () => (process.env.OPENAI_ORG ? { 'OpenAI-Organization': process.env.OPENAI_ORG } : {}),
+  },
   runway: {
     upstream: process.env.RUNWAY_UPSTREAM ?? 'https://api.dev.runwayml.com',
     key: () => process.env.RUNWAYML_API_SECRET ?? process.env.RUNWAY_API_KEY,

@@ -49,6 +49,7 @@ per generation.
 | Service | Where | What it does |
 | --- | --- | --- |
 | Tripo | [platform.tripo3d.ai](https://platform.tripo3d.ai) | image → 3D model |
+| OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | text or image → images. **Not covered by a ChatGPT subscription** — the API is billed separately |
 | Runway | [dev.runwayml.com](https://dev.runwayml.com) | image → video (Seedance lives here) |
 | OpenRouter | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) | text and image models |
 
@@ -135,6 +136,11 @@ of the copy it remembered.
 Front, Left, Back and Right. Connect one Image node to each and it reconstructs
 from all of them, which gets the back of an object right instead of inventing
 it. Front alone still works.
+
+**Generate several images at once.** The OpenAI Image node has a *Variations per
+run* slider. Set it to 4, press Run, and click whichever thumbnail you like —
+that one feeds the next node. Clicking a different one is free; you already paid
+for all four.
 
 **Try variations.** Click a node and press `Cmd+D` to duplicate it. Change the
 Seed on the copy, then Run. Two versions sit side by side for comparison.

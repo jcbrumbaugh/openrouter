@@ -171,6 +171,12 @@ export function createStore(registry) {
     }
   }
 
+  // Everything fed by this node is stale, but the node itself is not - used when
+  // a choice inside a node changes its output without redoing its work.
+  function invalidateDownstream(nodeId) {
+    for (const edge of outgoingEdges(nodeId)) invalidateFrom(edge.to.node);
+  }
+
   function setView(view) {
     Object.assign(state.view, view);
     bus.emit('view', state.view);
@@ -270,6 +276,7 @@ export function createStore(registry) {
     incomingEdges,
     outgoingEdges,
     invalidateFrom,
+    invalidateDownstream,
     portType,
     setView,
     select,

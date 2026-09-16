@@ -32,9 +32,13 @@ let tripoFlaky = false;        // 502 the next status check
 let tripoCreateFails = false;  // 502 the next task creation
 let runwayPolls = 0;
 let tripoLastBody = null;
+let openaiCalls = 0;
+let openaiLastBody = null;
+let openaiEditParts = null;
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 let runwayLastBody = null;
 
-function mockApi(req, res, url, body, origin) {
+function mockApi(req, res, url, body, origin, rawBody) {
   const json = (status, payload) => {
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(payload));
@@ -59,6 +63,23 @@ function mockApi(req, res, url, body, origin) {
   }
   if (url.pathname === '/health') {
     return json(200, { status: 'ok', providers: ['openrouter', 'tripo', 'runway'], keysFromEnv: {} });
+  }
+  if (url.pathname === '/openai/v1/images/generations' && req.method === 'POST') {
+    if (req.headers.authorization !== 'Bearer openai-key') {
+      return json(401, { error: { message: 'Incorrect API key provided' } });
+    }
+    openaiCalls += 1;
+    openaiLastBody = body;
+    const n = body?.n ?? 1;
+    return json(200, { created: 1, data: Array.from({ length: n }, () => ({ b64_json: PIXEL })) });
+  }
+  if (url.pathname === '/openai/v1/images/edits' && req.method === 'POST') {
+    openaiCalls += 1;
+    openaiEditParts = {
+      contentType: req.headers['content-type'] ?? '',
+      raw: rawBody?.toString('latin1') ?? '',
+    };
+    return json(200, { created: 1, data: [{ b64_json: PIXEL }, { b64_json: PIXEL }] });
   }
   if (url.pathname === '/tripo/v2/openapi/upload' && req.method === 'POST') {
     return json(200, { code: 0, data: { image_token: 'tok_abc' } });
@@ -193,7 +214,7 @@ function startServer() {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const url = new URL(req.url, origin);
     if (['/health', '/fetch'].includes(url.pathname)
-      || ['/api/', '/hy3d/', '/tripo/', '/runway/'].some((p) => url.pathname.startsWith(p))) {
+      || ['/api/', '/hy3d/', '/tripo/', '/runway/', '/openai/'].some((p) => url.pathname.startsWith(p))) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       let body = null;
@@ -202,7 +223,7 @@ function startServer() {
       } catch {
         body = null;
       }
-      return mockApi(req, res, url, body, origin);
+      return mockApi(req, res, url, body, origin, chunks.length ? Buffer.concat(chunks) : null);
     }
     return serveFile(res, url.pathname);
   });
@@ -856,7 +877,86 @@ try {
     previewed.loading === 'eager', String(previewed.loading));
   check('the Preview node still offers a download', previewed.hasDownload === true, JSON.stringify(previewed));
 
-  // 23. credential dropdowns are scoped per provider
+  // 23. OpenAI images: several variations, and picking one must not re-bill
+  const variations = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const key = keystore.save({ label: 'openai test', value: 'openai-key', provider: 'openai' });
+    const prompt = store.addNode('text', { x: -300, y: 5400 }, { value: 'a brushed steel pauldron' });
+    const gen = store.addNode('openai-image', { x: 40, y: 5400 }, {
+      credential: key,
+      baseUrl: `${baseUrl}/openai/v1`,
+      count: 3,
+    });
+    const preview = store.addNode('preview', { x: 420, y: 5400 });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: gen.id, port: 'prompt' });
+    store.addEdge({ node: gen.id, port: 'image' }, { node: preview.id, port: 'value' });
+    await engine.run({ targets: [preview.id], force: true });
+    const node = store.state.nodes.get(gen.id);
+    return {
+      id: gen.id,
+      status: node.status,
+      message: node.message,
+      imageCount: node.data._images?.length ?? 0,
+      selected: node.data._selected,
+      output: node.outputs?.image?.url?.slice(0, 22),
+      thumbs: document.querySelectorAll(`.node[data-node-id="${gen.id}"] .gallery-item`).length,
+    };
+  }, base);
+  check('an image generation run completes', variations.status === 'done', `${variations.status}: ${variations.message}`);
+  check('the requested number of variations comes back', variations.imageCount === 3, String(variations.imageCount));
+  check('the count is what was asked for', openaiLastBody?.n === 3, String(openaiLastBody?.n));
+  check('base64 results become usable images', variations.output?.startsWith('data:image/png'), variations.output ?? 'none');
+  check('every variation gets a thumbnail', variations.thumbs === 3, String(variations.thumbs));
+
+  const callsAfterRun = openaiCalls;
+  const chosen = await page.evaluate(async (nodeId) => {
+    const { store, engine } = window.nodeSpace;
+    const third = document.querySelectorAll(`.node[data-node-id="${nodeId}"] .gallery-item`)[2];
+    third.click();
+    const node = store.state.nodes.get(nodeId);
+    const before = node.outputs.image.url;
+    // Running again must reuse the cached generation, not buy more images.
+    await engine.run({ targets: [nodeId] });
+    return {
+      selected: store.state.nodes.get(nodeId).data._selected,
+      outputChanged: store.state.nodes.get(nodeId).outputs.image.url === before,
+      status: store.state.nodes.get(nodeId).status,
+      marked: document.querySelectorAll(`.node[data-node-id="${nodeId}"] .gallery-item.selected`).length,
+    };
+  }, variations.id);
+  check('clicking a thumbnail selects it', chosen.selected === 2, String(chosen.selected));
+  check('exactly one variation is marked as chosen', chosen.marked === 1, String(chosen.marked));
+  check('the choice becomes the node output', chosen.outputChanged === true, JSON.stringify(chosen));
+  check('choosing a variation costs nothing extra', openaiCalls === callsAfterRun, `${callsAfterRun} -> ${openaiCalls}`);
+  check('the re-run was served from cache', chosen.status === 'cached', chosen.status);
+
+  // 24. an image input switches to the edit endpoint as multipart
+  const edited = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const key = keystore.list().find((c) => c.provider === 'openai').id;
+    const prompt = store.addNode('text', { x: -300, y: 5800 }, { value: 'make it battle worn' });
+    const src = store.addNode('image-input', { x: -300, y: 5950 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', name: 'in.png', mime: 'image/png' },
+    });
+    const gen = store.addNode('openai-image', { x: 40, y: 5800 }, {
+      credential: key,
+      baseUrl: `${baseUrl}/openai/v1`,
+      count: 2,
+    });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: gen.id, port: 'prompt' });
+    store.addEdge({ node: src.id, port: 'image' }, { node: gen.id, port: 'image' });
+    await engine.run({ targets: [gen.id], force: true });
+    const node = store.state.nodes.get(gen.id);
+    return { status: node.status, message: node.message, count: node.data._images?.length ?? 0 };
+  }, base);
+  check('an edit run completes', edited.status === 'done', `${edited.status}: ${edited.message}`);
+  check('a source image routes to the edits endpoint as multipart',
+    /multipart\/form-data/.test(openaiEditParts?.contentType ?? ''), openaiEditParts?.contentType ?? 'none');
+  check('the source file is attached to the request',
+    /name="image"/.test(openaiEditParts?.raw ?? '') && /name="prompt"/.test(openaiEditParts?.raw ?? ''),
+    (openaiEditParts?.raw ?? '').slice(0, 120));
+
+  // 25. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

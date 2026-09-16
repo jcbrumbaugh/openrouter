@@ -14,6 +14,7 @@ export function createKeysModal(container, { keystore, getBaseUrl = () => '' }) 
     { class: 'field-input' },
     [
       h('option', { value: 'openrouter' }, 'OpenRouter'),
+      h('option', { value: 'openai' }, 'OpenAI'),
       h('option', { value: 'tripo' }, 'Tripo'),
       h('option', { value: 'runway' }, 'Runway'),
       h('option', { value: 'other' }, 'Other / custom API'),

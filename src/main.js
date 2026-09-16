@@ -6,6 +6,7 @@ import { registerOpenRouterNodes } from './nodes/openrouter-nodes.js';
 import { registerHunyuan3dNodes } from './nodes/hunyuan3d-nodes.js';
 import { registerTripoNodes } from './nodes/tripo-nodes.js';
 import { registerRunwayNodes } from './nodes/runway-nodes.js';
+import { registerOpenAiNodes } from './nodes/openai-nodes.js';
 import { createStore } from './core/store.js';
 import { createEngine } from './core/engine.js';
 import { createKeystore } from './providers/keystore.js';
@@ -15,6 +16,7 @@ import { createPalette, createQuickAdd } from './ui/palette.js';
 import { createKeysModal } from './ui/keys-modal.js';
 import { createLog } from './ui/log.js';
 import { checkGateway, DEFAULT_GATEWAY } from './providers/gateway.js';
+import { media } from './core/types.js';
 import { clear, h } from './util/dom.js';
 
 const AUTOSAVE_KEY = 'nodespace.graph.v1';
@@ -25,6 +27,7 @@ registerOpenRouterNodes(registry);
 registerHunyuan3dNodes(registry);
 registerTripoNodes(registry);
 registerRunwayNodes(registry);
+registerOpenAiNodes(registry);
 
 const keystore = createKeystore();
 const store = createStore(registry);
@@ -76,6 +79,20 @@ const canvas = createCanvas(canvasRoot, {
   openKeys: () => keysModal.open(),
   onFetchModels: fetchModels,
   onRunNode: (node) => engine.run({ targets: [node.id], force: true }),
+  // Choosing a variation swaps what this node hands downstream, without
+  // re-running it - the images are already paid for and in hand.
+  onPickVariation: (node, index) => {
+    const images = node.data._images ?? [];
+    if (!images[index]) return;
+    // updateNodeData invalidates the node's cache, which here would mean paying
+    // for the images again on the next run. The selection is excluded from the
+    // cache key, so the key from before the edit is still the right one.
+    const cacheKey = node.cacheKey;
+    store.updateNodeData(node.id, { _selected: index });
+    store.setNodeOutputs(node.id, { ...node.outputs, image: media('image', images[index]) }, cacheKey);
+    store.invalidateDownstream(node.id);
+    log(`variation ${index + 1} selected - run again to push it downstream`);
+  },
   onQuickAdd: (graphPoint, screenPoint) => quickAdd.open(graphPoint, screenPoint),
   onViewChange: (view) => {
     document.getElementById('zoom-label').textContent = `${Math.round(view.scale * 100)}%`;
