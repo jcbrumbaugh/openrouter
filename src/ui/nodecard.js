@@ -42,9 +42,16 @@ function renderModel3d(value) {
     stage.append(h('span', { class: 'model-note' }, text));
   };
 
-  // The viewer only speaks glTF; anything else is download-only.
-  if (!VIEWABLE.test(name)) {
-    note(`.${extension} files cannot be previewed here - download it and open it in your 3D app.`);
+  // The viewer only speaks glTF; anything else is download-only. The node works
+  // out the real format from the bytes, so trust that over the file name.
+  const previewable = value.previewable ?? VIEWABLE.test(name);
+  if (!previewable) {
+    const what = value.format ? `${value.format} files` : `.${extension} files`;
+    note(
+      `${what} cannot be shown in the browser. Download it and open it in Blender, Preview or your 3D app.${
+        extension === 'fbx' ? ' (FBX is what Tripo returns when Quad topology is on - turn that off for a previewable GLB.)' : ''
+      }`,
+    );
     return wrap;
   }
 

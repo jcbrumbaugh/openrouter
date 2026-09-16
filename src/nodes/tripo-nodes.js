@@ -3,7 +3,7 @@
 
 import { asText, media } from '../core/types.js';
 import { dataUrlToBlob, fetchViaGateway } from '../util/media.js';
-import { decodersNeeded, describeGlb, inspectGlb } from '../util/glb.js';
+import { describeMesh, inspectGlb, sniffMesh } from '../util/glb.js';
 import { DEFAULT_GATEWAY, gatewayOrigin } from '../providers/gateway.js';
 import {
   DEFAULT_TRIPO_BASE,
@@ -32,21 +32,29 @@ async function resolveFile({ imageUrl, baseUrl, apiKey, signal, log }) {
 // Provider CDNs serve no CORS headers, so a mesh has to come through the local
 // gateway before the page can display it. Falls back to the remote URL, which
 // still downloads even when it cannot be previewed.
-async function localiseMesh({ url, baseUrl, name, signal, log }) {
+// `stem` is the file name without an extension: the real extension comes from
+// the bytes, because the format depends on options (glTF cannot store quads, so
+// asking for quad topology yields FBX or OBJ instead).
+async function localiseMesh({ url, baseUrl, stem, signal, log }) {
   try {
     const { url: blobUrl, buffer } = await fetchViaGateway(url, gatewayOrigin(baseUrl), signal);
-    const info = /\.(glb|gltf)$/i.test(name) ? inspectGlb(buffer) : null;
-    log(`mesh downloaded (${info ? describeGlb(info) : `${Math.round(buffer.byteLength / 1024)} KB`})`);
-    if (info?.error) log(`the downloaded file does not look like a mesh: ${info.error}`, 'warn');
+    const sniffed = sniffMesh(buffer, url);
+    const glbInfo = sniffed.ext === 'glb' ? inspectGlb(buffer) : null;
+    log(`mesh downloaded (${describeMesh(sniffed, glbInfo)})`);
+    if (!sniffed.previewable) {
+      log(`${sniffed.label} cannot be shown in the browser - the download link gives you the file`, 'warn');
+    }
     return media('model3d', blobUrl, {
-      mime: 'model/gltf-binary',
-      name,
+      mime: sniffed.ext === 'glb' ? 'model/gltf-binary' : 'application/octet-stream',
+      name: `${stem}.${sniffed.ext}`,
       sourceUrl: url,
-      info: info ?? undefined,
+      format: sniffed.label,
+      previewable: sniffed.previewable,
+      info: glbInfo ?? undefined,
     });
   } catch (err) {
     log(`could not bring the mesh local, preview will be download-only: ${err.message}`, 'warn');
-    return media('model3d', url, { mime: 'model/gltf-binary', name, sourceUrl: url });
+    return media('model3d', url, { name: `${stem}.glb`, sourceUrl: url, previewable: false });
   }
 }
 
@@ -84,7 +92,7 @@ export function registerTripoNodes(registry) {
       { id: 'modelVersion', kind: 'select', label: 'Model', options: TRIPO_MODEL_VERSIONS },
       { id: 'texture', kind: 'checkbox', label: 'Texture' },
       { id: 'pbr', kind: 'checkbox', label: 'PBR materials' },
-      { id: 'quad', kind: 'checkbox', label: 'Quad topology (for rigging)' },
+      { id: 'quad', kind: 'checkbox', label: 'Quad topology - better for rigging, but returns FBX so it cannot preview here' },
       { id: 'modelSeed', kind: 'number', label: 'Seed (0 = random each run)', step: '1', min: 0 },
       {
         id: 'faceLimit',
@@ -197,7 +205,7 @@ export function registerTripoNodes(registry) {
 
       const modelUrl = pickModelUrl(task.output);
       if (!modelUrl) throw new Error('Tripo finished but returned no model URL.');
-      const model = await localiseMesh({ url: modelUrl, baseUrl, name: `tripo-${taskId}.glb`, signal, log });
+      const model = await localiseMesh({ url: modelUrl, baseUrl, stem: `tripo-${taskId}`, signal, log });
       const render = task.output?.rendered_image ? media('image', task.output.rendered_image) : null;
       setData({ _result: model });
       return { model, render, taskId, json: task };
@@ -330,16 +338,7 @@ export function registerTripoNodes(registry) {
 
       const modelUrl = pickModelUrl(task.output);
       if (!modelUrl) throw new Error('Tripo finished but returned no model URL.');
-      const extension = data.mode === 'convert_model'
-        ? { GLTF: 'glb', USDZ: 'usdz', FBX: 'fbx', OBJ: 'obj', STL: 'stl', '3MF': '3mf' }[data.format] ?? 'glb'
-        : 'glb';
-      const model = await localiseMesh({
-        url: modelUrl,
-        baseUrl,
-        name: `tripo-${taskId}.${extension}`,
-        signal,
-        log,
-      });
+      const model = await localiseMesh({ url: modelUrl, baseUrl, stem: `tripo-${taskId}`, signal, log });
       setData({ _result: model });
       return { model, taskId, json: task };
     },

@@ -229,13 +229,19 @@ directly: provider CDNs serve no CORS headers, so a viewer pointed at the remote
 URL renders an empty box. If that download fails the node falls back to the
 remote URL and says the preview will be download-only.
 
-Each downloaded mesh is inspected before it is shown, and the log line reports
-what arrived — size, glTF version, and any extension that needs a decoder the
-viewer fetches at runtime (`KHR_draco_mesh_compression`, `EXT_meshopt_compression`,
-`KHR_texture_basisu`). If the viewer then fails, the preview names that decoder
-rather than saying the mesh is broken, because it usually is not: the file
-downloads and opens elsewhere perfectly well. A response that is not a mesh at
-all — an expired-link JSON error, say — is reported as such.
+Each downloaded mesh is identified from its own bytes rather than trusted to be
+what was asked for, because the format depends on the options: **glTF can only
+store triangles, so turning on quad topology makes Tripo return FBX instead**.
+The file is named from what actually arrived (`.glb`, `.fbx`, `.obj`, `.zip`,
+`.usdc`…), the log reports it, and a format the browser cannot render says so
+instead of failing in the viewer.
+
+For a real glTF the log also reports its version and any extension needing a
+decoder fetched at runtime (`KHR_draco_mesh_compression`,
+`EXT_meshopt_compression`, `KHR_texture_basisu`); if the viewer then fails, the
+preview names that decoder rather than implying the mesh is broken. A response
+that is not a mesh at all — an expired-link JSON error, say — is reported as
+such, with its leading bytes.
 
 ### Follow-up tasks
 

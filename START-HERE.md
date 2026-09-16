@@ -154,6 +154,7 @@ for Apple AR, STL for printing), re-texture the same shape, or stylize it.
 
 | What you see | What it means |
 | --- | --- |
+| The 3D preview says it cannot show the file | Check whether **Quad topology** is ticked on the Tripo node. Quads cannot be stored in the format browsers display, so Tripo returns FBX instead. Untick it to preview; leave it on when you want the file for rigging |
 | A node says `no result yet - press Run` | That node has not run. The small ▶ on a node runs it and everything feeding *into* it, but nothing after it. **Run** at the top runs the whole graph |
 | `gateway off` | Close the Terminal window, double-click `start.command` again |
 | `401` on a node | That key is wrong, expired, or from another account — paste a fresh one |

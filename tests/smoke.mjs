@@ -44,8 +44,17 @@ function mockApi(req, res, url, body, origin) {
   if (url.pathname === '/fetch') {
     const remote = url.searchParams.get('url');
     if (!remote) return json(400, { error: { message: 'no url' } });
-    res.writeHead(200, { 'Content-Type': 'model/gltf-binary' });
-    res.end(Buffer.from('glTF relayed bytes'));
+    // Relay the actual fixture so the app sniffs real file signatures.
+    const local = path.join(ROOT, new URL(remote).pathname.replace(/^\/+/, ''));
+    readFile(local)
+      .then((data) => {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        res.end(data);
+      })
+      .catch(() => {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('missing fixture');
+      });
     return;
   }
   if (url.pathname === '/health') {
@@ -71,7 +80,7 @@ function mockApi(req, res, url, body, origin) {
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_2') {
     return json(200, {
       code: 0,
-      data: { status: 'success', output: { pbr_model: `${origin}/tests/fixtures/model.glb` } },
+      data: { status: 'success', output: { pbr_model: `${origin}/tests/fixtures/model.fbx` } },
     });
   }
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_1') {
@@ -537,6 +546,7 @@ try {
 
   check('Tripo task completes', pipeline.tripo.status === 'done', `${pipeline.tripo.status}: ${pipeline.tripo.message}`);
   check('Tripo returns a mesh', pipeline.tripo.outputs?.model?.type === 'model3d', JSON.stringify(pipeline.tripo.outputs?.model));
+  check('a real glTF mesh is marked previewable', pipeline.tripo.outputs?.model?.previewable === true, JSON.stringify(pipeline.tripo.outputs?.model?.format));
   check('the mesh is pulled local so it can be previewed',
     pipeline.tripo.outputs?.model?.url?.startsWith('blob:'),
     pipeline.tripo.outputs?.model?.url ?? 'none');
@@ -624,7 +634,9 @@ try {
   check('a follow-up Tripo task completes', refined.status === 'done', `${refined.status}: ${refined.message}`);
   check('the follow-up references the original task', tripoLastBody?.original_model_task_id === 'tripo_task_1', String(tripoLastBody?.original_model_task_id));
   check('the requested export format is sent', tripoLastBody?.format === 'FBX', String(tripoLastBody?.format));
-  check('the converted file keeps its real extension', /\.fbx$/.test(refined.model?.name ?? ''), refined.model?.name ?? 'none');
+  check('the converted file is named from its actual bytes', /\.fbx$/.test(refined.model?.name ?? ''), refined.model?.name ?? 'none');
+  check('a format the browser cannot show is marked unpreviewable', refined.model?.previewable === false, JSON.stringify(refined.model?.format));
+  check('the format is named for the user', /FBX/.test(refined.model?.format ?? ''), refined.model?.format ?? 'none');
 
   // 17. duplicating a node, for trying variations side by side
   const duplicated = await page.evaluate(() => {
