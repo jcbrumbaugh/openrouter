@@ -190,6 +190,9 @@ export function registerTripoNodes(registry) {
           setStatus(`${status}${typeof progress === 'number' ? ` ${progress}%` : ''}`);
           if (attempt === 1 || attempt % 6 === 0) log(`task ${taskId}: ${status}`);
         },
+        onRetry: (err, attempt, delay) => {
+          log(`status check failed (${err.message}) - retrying in ${delay / 1000}s, the job is still running`, 'warn');
+        },
       });
 
       const modelUrl = pickModelUrl(task.output);
@@ -319,6 +322,9 @@ export function registerTripoNodes(registry) {
         onTick: (status, progress, attempt) => {
           setStatus(`${status}${typeof progress === 'number' ? ` ${progress}%` : ''}`);
           if (attempt === 1 || attempt % 6 === 0) log(`task ${taskId}: ${status}`);
+        },
+        onRetry: (err, attempt, delay) => {
+          log(`status check failed (${err.message}) - retrying in ${delay / 1000}s, the job is still running`, 'warn');
         },
       });
 

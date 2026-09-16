@@ -158,6 +158,7 @@ for Apple AR, STL for printing), re-texture the same shape, or stylize it.
 | `gateway off` | Close the Terminal window, double-click `start.command` again |
 | `401` on a node | That key is wrong, expired, or from another account — paste a fresh one |
 | `402` on a node | That account is out of credit, or needs a payment method |
+| `502`, `503` or `504` | The provider's own servers are having a moment. Nothing is wrong with your key or your image. Status checks retry themselves; if a generation failed to start, nothing was charged — just press Run again |
 | Nothing happens on double-click | Right-click `start.command` → Open → Open |
 | `command not found: git` | macOS will offer to install its developer tools — accept, then retry |
 

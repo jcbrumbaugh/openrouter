@@ -1,6 +1,8 @@
 // Thin OpenRouter client. Everything goes through request() so the base URL can
 // point at openrouter.ai directly or at the local proxy in scripts/proxy.mjs.
 
+import { cleanDetail, isRetryableStatus } from '../util/http.js';
+
 export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
 
 function joinUrl(baseUrl, path) {
@@ -56,17 +58,21 @@ export async function request({
   }
   const payload = await parseBody(response);
   if (!response.ok) {
-    const detail =
+    const detail = cleanDetail(
       payload?.error?.message ||
-      payload?.error?.metadata?.raw ||
-      payload?.message ||
-      payload?.raw ||
-      response.statusText;
+        payload?.error?.metadata?.raw ||
+        payload?.message ||
+        payload?.raw ||
+        '',
+      response.statusText,
+    );
     const err = new Error(`${response.status} ${detail}`.trim());
     if (response.status === 401) {
       err.message += '. That key was rejected - it is usually revoked, mistyped, or from a different account. Open Keys and re-paste it, then use Test.';
     } else if (response.status === 402) {
       err.message += '. Your OpenRouter account is out of credit for this model.';
+    } else if (isRetryableStatus(response.status)) {
+      err.message += '. That is a fault on the provider\'s side rather than anything wrong here.';
     } else if (response.status === 404) {
       err.message += '. Check the model slug and the request path (the refresh button next to Model lists what exists).';
     }

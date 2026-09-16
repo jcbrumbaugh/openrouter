@@ -28,6 +28,8 @@ const FAKE_GLB = Buffer.from('glTF fake binary payload for tests').toString('bas
 // Tripo and Runway stand-ins, shaped like the real APIs (contracts read from
 // tripo3d 0.4.2 and @runwayml/sdk 4.20.0).
 let tripoPolls = 0;
+let tripoFlaky = false;        // 502 the next status check
+let tripoCreateFails = false;  // 502 the next task creation
 let runwayPolls = 0;
 let tripoLastBody = null;
 let runwayLastBody = null;
@@ -53,6 +55,12 @@ function mockApi(req, res, url, body, origin) {
     return json(200, { code: 0, data: { image_token: 'tok_abc' } });
   }
   if (url.pathname === '/tripo/v2/openapi/task' && req.method === 'POST') {
+    if (tripoCreateFails) {
+      tripoCreateFails = false;
+      res.writeHead(502, { 'Content-Type': 'text/html' });
+      res.end('<html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n</body>\n</html>');
+      return;
+    }
     if (req.headers.authorization !== 'Bearer tripo-key') return json(401, { code: 1002, message: 'invalid token' });
     tripoLastBody = body;
     // Follow-up tasks (convert/texture/stylize) reference an existing mesh.
@@ -67,6 +75,12 @@ function mockApi(req, res, url, body, origin) {
     });
   }
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_1') {
+    if (tripoFlaky) {
+      tripoFlaky = false;
+      res.writeHead(502, { 'Content-Type': 'text/html' });
+      res.end('<html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n</body>\n</html>');
+      return;
+    }
     tripoPolls += 1;
     if (tripoPolls < 2) return json(200, { code: 0, data: { status: 'running', progress: 40 } });
     return json(200, {
@@ -187,11 +201,11 @@ function startServer() {
 }
 
 // Network failures some checks provoke on purpose: a revoked key, a server that
-// is not running, the gateway poll with no gateway, and the viewer CDN while
-// offline. Chromium logs each as a resource notice. Real script errors arrive
+// is not running, the deliberate 502s in the resilience checks, the gateway poll
+// with no gateway, and the viewer CDN while offline. Chromium logs each as a resource notice. Real script errors arrive
 // through the 'pageerror' handler and are never filtered.
 const EXPECTED_NOISE =
-  /status of 401|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
+  /status of 401|status of 502|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
 const realErrors = (list) => list.filter((text) => !EXPECTED_NOISE.test(text));
 
 // ---- assertions ----------------------------------------------------------
@@ -723,7 +737,57 @@ try {
     /press Run/.test(await page.evaluate(() => document.querySelector('.preview.empty')?.textContent ?? '')),
     await page.evaluate(() => document.querySelector('.preview.empty')?.textContent ?? 'none'));
 
-  // 20. credential dropdowns are scoped per provider
+  // 20. a provider blip must not throw away a running job
+  tripoFlaky = true;
+  const survived = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const image = store.addNode('image-input', { x: -300, y: 4300 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgo=', name: 'f.png', mime: 'image/png' },
+    });
+    const tripo = store.addNode('tripo-3d', { x: 40, y: 4300 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'front' });
+    await engine.run({ targets: [tripo.id], force: true });
+    const node = store.state.nodes.get(tripo.id);
+    return { status: node.status, message: node.message, hasModel: Boolean(node.outputs?.model) };
+  }, base);
+  check('a 502 during polling is retried, not fatal', survived.status === 'done', `${survived.status}: ${survived.message}`);
+  check('the job still produces its mesh after a blip', survived.hasModel === true, JSON.stringify(survived));
+  const retryLog = await page.evaluate(() =>
+    [...document.querySelectorAll('.log-line.warn .log-msg')].map((el) => el.textContent).join(' | '));
+  check('the retry is reported as the provider\'s fault, not the user\'s',
+    /still running/.test(retryLog) && /502 Bad Gateway/.test(retryLog) && !/<html>/.test(retryLog),
+    retryLog.slice(0, 200));
+
+  // 21. a 502 on task creation is not retried, and says so plainly
+  tripoCreateFails = true;
+  const createFailed = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const image = store.addNode('image-input', { x: -300, y: 4600 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgo=', name: 'g.png', mime: 'image/png' },
+    });
+    const tripo = store.addNode('tripo-3d', { x: 40, y: 4600 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'front' });
+    await engine.run({ targets: [tripo.id], force: true });
+    const message = store.state.nodes.get(tripo.id).message;
+    store.removeNode(tripo.id);
+    store.removeNode(image.id);
+    return message;
+  }, base);
+  check('a failed task creation shows no raw HTML', !/<html>|<center>/.test(createFailed), createFailed.slice(0, 160));
+  check('it names the 502 and whose fault it is', /502 Bad Gateway/.test(createFailed) && /Tripo's side/.test(createFailed), createFailed.slice(0, 200));
+  check('it says nothing was charged', /not charged/.test(createFailed), createFailed.slice(0, 200));
+
+  // 22. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

@@ -88,7 +88,16 @@ export function registerRunwayNodes(registry) {
       for (let attempt = 1; ; attempt += 1) {
         if (Date.now() > deadline) throw new Error(`Timed out waiting for Runway task ${taskId}.`);
         await sleep(every, signal);
-        const task = await getTask({ baseUrl, apiKey, taskId, signal });
+        const task = await getTask({
+          baseUrl,
+          apiKey,
+          taskId,
+          signal,
+          onRetry: (err, attempt, delay) => log(
+            `status check failed (${err.message}) - retrying in ${delay / 1000}s, the job is still running`,
+            'warn',
+          ),
+        });
         const status = task?.status ?? 'PENDING';
         setStatus(`${status.toLowerCase()} (${attempt})`);
 

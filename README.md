@@ -320,6 +320,22 @@ app's only external dependency, `<model-viewer>`, fetched from a CDN the first
 time a mesh appears and never before. If it cannot load, the download link is
 still there — macOS previews `.glb` with Quick Look.
 
+## When a provider has a bad day
+
+Gateway errors (502/503/504) are the providers' own infrastructure, and they
+are handled differently depending on whether repeating the request is safe:
+
+- **Status checks retry** — up to four attempts with 2s/4s/8s backoff. A job
+  already running on the provider's side survives a blip instead of being
+  thrown away after two minutes of waiting, and the log says it is retrying.
+- **Task creation does not retry.** Repeating a POST can mean two jobs and two
+  charges, so the node stops and says nothing was generated or charged, and to
+  press Run again.
+
+Provider error pages are HTML; the headline is extracted so the node shows
+`502 Bad Gateway (the provider's own server returned an error page)` rather
+than a wall of markup.
+
 ## Plugging in your other APIs
 
 Two options, in increasing order of effort:

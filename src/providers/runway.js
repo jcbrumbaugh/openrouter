@@ -10,6 +10,8 @@
 // That SDK refuses to run in a browser at all, and the API sends no CORS
 // headers, so baseUrl points at the local gateway in scripts/proxy.mjs.
 
+import { cleanDetail, isRetryableStatus, withRetry } from '../util/http.js';
+
 export const DEFAULT_RUNWAY_BASE = 'http://localhost:8787/runway';
 export const RUNWAY_API_VERSION = '2024-11-06';
 
@@ -61,11 +63,13 @@ async function parse(response) {
     payload = { raw: text };
   }
   if (!response.ok) {
-    const detail = payload?.error ?? payload?.message ?? payload?.raw ?? response.statusText;
-    const err = new Error(`${response.status} ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+    const raw = payload?.error ?? payload?.message ?? payload?.raw ?? '';
+    const detail = cleanDetail(typeof raw === 'string' ? raw : JSON.stringify(raw), response.statusText);
+    const err = new Error(`${response.status} ${detail}`.trim());
     err.status = response.status;
     if (response.status === 401) err.message += '. Runway rejected that key - check it at dev.runwayml.com.';
-    if (response.status === 429) err.message += '. Runway is rate limiting or your credits ran out.';
+    else if (response.status === 429) err.message += '. Runway is rate limiting or your credits ran out.';
+    else if (isRetryableStatus(response.status)) err.message += '. That is a fault on Runway\'s side rather than anything wrong here.';
     throw err;
   }
   return payload;
@@ -87,10 +91,13 @@ export async function createImageToVideo({ baseUrl, apiKey, body, signal }) {
   return payload.id;
 }
 
-export async function getTask({ baseUrl, apiKey, taskId, signal }) {
-  const response = await fetch(join(baseUrl, `/v1/tasks/${encodeURIComponent(taskId)}`), {
-    headers: headers(apiKey),
-    signal,
-  });
-  return parse(response);
+export async function getTask({ baseUrl, apiKey, taskId, signal, onRetry }) {
+  // Safe to repeat, and the generation keeps running on Runway's side.
+  return withRetry(async () => {
+    const response = await fetch(join(baseUrl, `/v1/tasks/${encodeURIComponent(taskId)}`), {
+      headers: headers(apiKey),
+      signal,
+    });
+    return parse(response);
+  }, { signal, onRetry, attempts: 4 });
 }

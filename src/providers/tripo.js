@@ -11,6 +11,8 @@
 // Tripo does not serve CORS headers, so baseUrl normally points at the local
 // gateway in scripts/proxy.mjs rather than at Tripo directly.
 
+import { cleanDetail, isRetryableStatus, withRetry } from '../util/http.js';
+
 export const DEFAULT_TRIPO_BASE = 'http://localhost:8787/tripo/v2/openapi';
 
 export const TRIPO_MODEL_VERSIONS = [
@@ -37,12 +39,17 @@ async function parse(response, what) {
     payload = { raw: text };
   }
   if (!response.ok || (payload && typeof payload.code === 'number' && payload.code !== 0)) {
-    const detail = payload?.message ?? payload?.error ?? payload?.raw ?? response.statusText;
+    const detail = cleanDetail(
+      payload?.message ?? payload?.error ?? payload?.raw ?? '',
+      response.statusText,
+    );
     const err = new Error(`${response.status} ${detail}`.trim());
     err.status = response.status;
     err.payload = payload;
     if (response.status === 401 || response.status === 403) {
       err.message += '. Tripo rejected that key - check it at platform.tripo3d.ai.';
+    } else if (isRetryableStatus(response.status)) {
+      err.message += '. That is a fault on Tripo\'s side rather than anything wrong here.';
     }
     throw err;
   }
@@ -57,7 +64,7 @@ function networkHint(baseUrl, err) {
 }
 
 // Polls one task to completion. Shared by every Tripo node.
-export async function pollTask({ baseUrl, apiKey, taskId, signal, everyMs, timeoutMs, onTick }) {
+export async function pollTask({ baseUrl, apiKey, taskId, signal, everyMs, timeoutMs, onTick, onRetry }) {
   const deadline = Date.now() + timeoutMs;
   for (let attempt = 1; ; attempt += 1) {
     if (Date.now() > deadline) throw new Error(`Timed out waiting for Tripo task ${taskId}.`);
@@ -68,7 +75,13 @@ export async function pollTask({ baseUrl, apiKey, taskId, signal, everyMs, timeo
         reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
       }, { once: true });
     });
-    const task = await getTask({ baseUrl, apiKey, taskId, signal });
+    const task = await getTask({
+      baseUrl,
+      apiKey,
+      taskId,
+      signal,
+      onRetry: (err, attempt, delay) => onRetry?.(err, attempt, delay),
+    });
     const status = String(task.status ?? 'unknown').toLowerCase();
     onTick?.(status, task.progress, attempt);
     if (TERMINAL_OK.includes(status)) return task;
@@ -92,19 +105,31 @@ export async function createTask({ baseUrl, apiKey, body, signal }) {
     if (err.name === 'AbortError') throw err;
     throw networkHint(baseUrl || DEFAULT_TRIPO_BASE, err);
   }
-  const payload = await parse(response, 'task creation');
+  let payload;
+  try {
+    payload = await parse(response, 'task creation');
+  } catch (err) {
+    if (isRetryableStatus(err.status)) {
+      err.message += ' Nothing was generated and you were not charged - press Run to try again.';
+    }
+    throw err;
+  }
   const taskId = payload?.data?.task_id;
   if (!taskId) throw new Error('Tripo accepted the request but returned no task_id.');
   return taskId;
 }
 
-export async function getTask({ baseUrl, apiKey, taskId, signal }) {
-  const response = await fetch(join(baseUrl, `/task/${encodeURIComponent(taskId)}`), {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal,
-  });
-  const payload = await parse(response, 'task status');
-  return payload.data ?? {};
+export async function getTask({ baseUrl, apiKey, taskId, signal, onRetry }) {
+  // Reading status is safe to repeat, and the job keeps running on Tripo's side
+  // regardless, so a blip here must not lose it.
+  return withRetry(async () => {
+    const response = await fetch(join(baseUrl, `/task/${encodeURIComponent(taskId)}`), {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+    const payload = await parse(response, 'task status');
+    return payload.data ?? {};
+  }, { signal, onRetry, attempts: 4 });
 }
 
 // Tripo accepts a public URL directly; anything local has to be uploaded first.
