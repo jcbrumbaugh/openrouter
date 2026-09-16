@@ -5,3 +5,9 @@ node_modules/
 *.log
 .DS_Store
 tests/.artifacts/
+
+# Your own files - the folder and its structure are tracked, the contents are not
+my-work/**
+!my-work/README.md
+!my-work/*/
+!my-work/**/.gitkeep

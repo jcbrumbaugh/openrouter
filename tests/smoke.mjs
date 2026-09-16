@@ -39,6 +39,9 @@ function mockApi(req, res, url, body, origin) {
   };
   apiCalls.push(`${req.method} ${url.pathname}`);
 
+  if (url.pathname === '/health') {
+    return json(200, { status: 'ok', providers: ['openrouter', 'tripo', 'runway'], keysFromEnv: {} });
+  }
   if (url.pathname === '/tripo/v2/openapi/upload' && req.method === 'POST') {
     return json(200, { code: 0, data: { image_token: 'tok_abc' } });
   }
@@ -151,7 +154,7 @@ function startServer() {
   const server = http.createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const url = new URL(req.url, origin);
-    if (['/api/', '/hy3d/', '/tripo/', '/runway/'].some((p) => url.pathname.startsWith(p))) {
+    if (url.pathname === '/health' || ['/api/', '/hy3d/', '/tripo/', '/runway/'].some((p) => url.pathname.startsWith(p))) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       let body = null;
@@ -166,6 +169,14 @@ function startServer() {
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
+
+// Network failures some checks provoke on purpose: a revoked key, a server that
+// is not running, the gateway poll with no gateway, and the viewer CDN while
+// offline. Chromium logs each as a resource notice. Real script errors arrive
+// through the 'pageerror' handler and are never filtered.
+const EXPECTED_NOISE =
+  /status of 401|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
+const realErrors = (list) => list.filter((text) => !EXPECTED_NOISE.test(text));
 
 // ---- assertions ----------------------------------------------------------
 let passed = 0;
@@ -202,7 +213,7 @@ try {
   await page.waitForFunction(() => window.nodeSpace !== undefined, null, { timeout: 10000 });
 
   // 1. boot + starter graph
-  check('app boots without page errors', consoleErrors.length === 0, consoleErrors.join(' | '));
+  check('app boots without page errors', realErrors(consoleErrors).length === 0, consoleErrors.join(' | '));
   const nodeCount = await page.locator('.node').count();
   check('starter graph renders its 6 nodes', nodeCount === 6, `saw ${nodeCount}`);
   const wireCount = await page.locator('path.wire').count();
@@ -545,14 +556,24 @@ try {
   });
   check('a page-local blob image is refused with an explanation', /public URL or a data URL/.test(blobRejected), blobRejected);
 
+  // 17. the toolbar says whether the gateway is running
+  const gatewayDown = await page.locator('#gateway').getAttribute('data-state');
+  check('gateway shows as off when it is not running', gatewayDown === 'down', String(gatewayDown));
+  const downTitle = await page.locator('#gateway').getAttribute('title');
+  check('the off state explains what to do', /start\.command/.test(downTitle ?? ''), downTitle ?? '');
+
+  const gatewayUp = await page.evaluate(async (origin) => {
+    const { checkGateway } = await import('/src/providers/gateway.js');
+    return checkGateway(origin);
+  }, base);
+  check('a running gateway reports ok', gatewayUp.up === true, JSON.stringify(gatewayUp));
+  check('the gateway names its providers',
+    ['openrouter', 'tripo', 'runway'].every((p) => gatewayUp.providers.includes(p)),
+    JSON.stringify(gatewayUp.providers));
+
   // The revoked-key check above deliberately provokes a 401, and Chromium logs
   // every failed request to the console; that one is expected.
-  // Two checks above deliberately provoke network failures (a revoked key, a
-  // server that is not running) and the viewer CDN is unreachable offline.
-  // Chromium logs each as a resource notice; real script errors arrive through
-  // the 'pageerror' handler instead and are never filtered here.
-  const expectedNoise = /status of 401|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
-  const unexpected = consoleErrors.filter((text) => !expectedNoise.test(text));
+  const unexpected = realErrors(consoleErrors);
   check('no unexpected console errors during the whole run', unexpected.length === 0, unexpected.join(' | '));
 } finally {
   await browser.close();

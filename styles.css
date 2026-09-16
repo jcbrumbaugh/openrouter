@@ -48,6 +48,23 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 }
 .toolbar-group { display: flex; align-items: center; gap: 6px; }
 .toolbar-group.right { margin-left: auto; }
+.gateway {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: help;
+}
+.gateway-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); flex: 0 0 7px; }
+.gateway[data-state='up'] { color: var(--ok); border-color: #2c4a38; }
+.gateway[data-state='up'] .gateway-dot { background: var(--ok); }
+.gateway[data-state='down'] { color: var(--warn); border-color: #4a3d23; }
+.gateway[data-state='down'] .gateway-dot { background: var(--warn); }
+
 .zoom { color: var(--text-dim); min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
 
 button, .file-label {

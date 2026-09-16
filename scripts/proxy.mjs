@@ -64,6 +64,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, 'http://localhost');
+
+  // Lets the launcher detect an already-running gateway, and lets the app show
+  // whether it is up.
+  if (url.pathname === '/health') {
+    res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      providers: Object.keys(PROVIDERS),
+      keysFromEnv: Object.fromEntries(Object.entries(PROVIDERS).map(([name, p]) => [name, Boolean(p.key())])),
+    }));
+    return;
+  }
+
   const target = route(url.pathname);
   if (!target) {
     res.writeHead(404, { ...CORS, 'Content-Type': 'application/json' });
@@ -102,6 +115,16 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: { message: `proxy could not reach ${target.name}: ${err.message}` } }));
     console.error(`${req.method} ${target.name}${target.path} -> ${err.message}`);
   }
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n  Port ${PORT} is already in use - the gateway is probably already running.`);
+    console.error('  That is fine: keep using the one that is already up.\n');
+    process.exit(0);
+  }
+  console.error(err.message);
+  process.exit(1);
 });
 
 server.listen(PORT, () => {

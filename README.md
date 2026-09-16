@@ -7,13 +7,21 @@ first provider wired up is **OpenRouter**, including a video node aimed at
 
 ![the canvas](docs/screenshot.png)
 
+> **New to this?** [START-HERE.md](START-HERE.md) is the same setup written
+> without jargon, for a Mac, step by step.
+
 ## Run it
 
 Opening `index.html` by double-clicking will **not** work: browsers refuse to
 load ES modules over `file://`, so the folder has to be served.
 
-**On a Mac, double-click `start.command` in Finder.** It serves the folder and
-opens your browser. Close the Terminal window it opens to stop the server.
+**On a Mac, double-click `start.command` in Finder.** It starts the page server
+*and* the API gateway, then opens your browser. Close the Terminal window to
+stop both. It reuses a gateway that is already running rather than starting a
+second one, and if Node is missing it says how to install it.
+
+The toolbar shows **gateway on / off** so you can see at a glance whether Tripo
+and Runway will work.
 
 From a terminal, either of these does the same thing:
 
@@ -318,15 +326,18 @@ is a development convenience with no auth of its own.
 ## Tests
 
 ```bash
-npm install     # playwright, dev-only
-npm test        # serves the app + a mock OpenRouter API, drives it in Chromium
+npm install          # playwright, dev-only
+npm test             # serves the app + mock APIs, drives it in Chromium
+npm run test:launcher # start.command brings both services up and takes them down
 node tests/screenshot.mjs   # refreshes docs/screenshot.png
 ```
 
 The smoke test covers booting, palette insertion, drag-to-connect, port type
-and cycle rejection, a full submit-and-poll video run against the mock API, the
-missing-key error path, secret-free export, autosave restore, and the quick-add
-menu — 20 assertions, no network access required.
+and cycle rejection, full submit-and-poll runs against mocks of OpenRouter,
+Tripo, Runway and Hunyuan3D, the missing-key and revoked-key paths, secret-free
+export, autosave restore, provider-scoped credential dropdowns and the gateway
+indicator — 53 assertions, no network access required. The launcher test checks
+that closing the window really does leave nothing running.
 
 ## Layout
 

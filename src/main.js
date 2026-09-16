@@ -14,6 +14,7 @@ import { createCanvas } from './ui/canvas.js';
 import { createPalette, createQuickAdd } from './ui/palette.js';
 import { createKeysModal } from './ui/keys-modal.js';
 import { createLog } from './ui/log.js';
+import { checkGateway, DEFAULT_GATEWAY } from './providers/gateway.js';
 import { clear, h } from './util/dom.js';
 
 const AUTOSAVE_KEY = 'nodespace.graph.v1';
@@ -221,6 +222,29 @@ window.addEventListener('keydown', (event) => {
     engine.run({});
   }
 });
+
+// ---- gateway indicator ---------------------------------------------------
+
+const gatewayEl = document.getElementById('gateway');
+const gatewayLabel = document.getElementById('gateway-label');
+let gatewayWasUp = null;
+
+async function refreshGateway() {
+  const { up } = await checkGateway(DEFAULT_GATEWAY);
+  gatewayEl.dataset.state = up ? 'up' : 'down';
+  gatewayLabel.textContent = up ? 'gateway on' : 'gateway off';
+  gatewayEl.title = up
+    ? `Local gateway is running on ${DEFAULT_GATEWAY}. Tripo and Runway will work.`
+    : 'Local gateway is not running. OpenRouter still works; Tripo and Runway need it. Close this window and double-click start.command again.';
+  if (gatewayWasUp !== null && gatewayWasUp !== up) {
+    log(up ? 'gateway is up - Tripo and Runway are available' : 'gateway went away - Tripo and Runway will fail until it is back', up ? 'info' : 'warn');
+  }
+  gatewayWasUp = up;
+}
+
+refreshGateway();
+setInterval(refreshGateway, 15000);
+window.nodeSpaceRefreshGateway = refreshGateway;
 
 setRunning(false);
 boot();
