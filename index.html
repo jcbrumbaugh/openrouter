@@ -37,7 +37,14 @@
     </header>
 
     <main class="layout">
-      <aside id="palette" class="palette" aria-label="Node palette"></aside>
+      <aside class="sidebar">
+        <div class="sidebar-tabs" role="tablist">
+          <button id="tab-nodes" class="sidebar-tab active" type="button" role="tab">Nodes</button>
+          <button id="tab-library" class="sidebar-tab" type="button" role="tab">Library</button>
+        </div>
+        <div id="palette" class="palette" aria-label="Node palette"></div>
+        <div id="library" class="library hidden" aria-label="Saved work"></div>
+      </aside>
       <section id="canvas" class="canvas" aria-label="Graph canvas"></section>
     </main>
 

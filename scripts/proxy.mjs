@@ -16,8 +16,18 @@
 // Bodies are forwarded byte for byte, so multipart uploads pass through intact.
 
 import http from 'node:http';
+import path from 'node:path';
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 
 const PORT = Number(process.env.PROXY_PORT ?? 8787);
+
+// The local library: everything the app saves lands here and nowhere else.
+const LIBRARY_ROOT = path.resolve(import.meta.dirname, '..', 'my-work');
+const KINDS = new Set(['models', 'videos', 'images', 'graphs']);
+const EXT_BY_MIME = {
+  'model/gltf-binary': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg',
+  'image/webp': 'webp', 'video/mp4': 'mp4', 'application/json': 'json',
+};
 const ALLOW_ORIGIN = process.env.PROXY_ALLOW_ORIGIN ?? '*';
 
 const PROVIDERS = {
@@ -61,6 +71,141 @@ function route(pathname) {
   return null;
 }
 
+// Keeps every path inside my-work, whatever is asked for.
+function safePath(kind, name) {
+  if (!KINDS.has(kind)) throw new Error(`unknown library folder: ${kind}`);
+  const clean = path.basename(String(name ?? '')).replace(/[^\w.\- ]+/g, '_');
+  if (!clean || clean === '.' || clean === '..') throw new Error('bad file name');
+  const full = path.join(LIBRARY_ROOT, kind, clean);
+  if (!full.startsWith(path.join(LIBRARY_ROOT, kind) + path.sep)) throw new Error('path escapes the library');
+  return { full, clean, rel: `${kind}/${clean}` };
+}
+
+const sidecarFor = (full) => `${full.replace(/\.[^.]+$/, '')}.meta.json`;
+
+async function readMeta(full) {
+  try {
+    return JSON.parse(await readFile(sidecarFor(full), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+async function handleLibrary(req, res, url) {
+  const send = (status, payload) => {
+    res.writeHead(status, { ...CORS, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  };
+  const body = async () => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+  };
+
+  try {
+    // GET /library/list -> everything saved, with its notes
+    if (url.pathname === '/library/list' && req.method === 'GET') {
+      const items = [];
+      for (const kind of KINDS) {
+        const dir = path.join(LIBRARY_ROOT, kind);
+        let names;
+        try {
+          names = await readdir(dir);
+        } catch {
+          continue;
+        }
+        for (const name of names) {
+          if (name.startsWith('.') || name.endsWith('.meta.json')) continue;
+          const full = path.join(dir, name);
+          const info = await stat(full);
+          if (!info.isFile()) continue;
+          items.push({
+            kind,
+            name,
+            rel: `${kind}/${name}`,
+            bytes: info.size,
+            modified: info.mtime.toISOString(),
+            meta: (await readMeta(full)) ?? {},
+          });
+        }
+      }
+      items.sort((a, b) => b.modified.localeCompare(a.modified));
+      return send(200, { root: LIBRARY_ROOT, items });
+    }
+
+    // POST /library/save -> write a file plus its notes sidecar
+    if (url.pathname === '/library/save' && req.method === 'POST') {
+      const input = await body();
+      const { full, clean, rel } = safePath(input.kind, input.name);
+      await mkdir(path.dirname(full), { recursive: true });
+
+      let bytes;
+      if (typeof input.dataUrl === 'string') {
+        const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(input.dataUrl);
+        if (!match) throw new Error('dataUrl is not a data URL');
+        bytes = match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]));
+      } else if (typeof input.text === 'string') {
+        bytes = Buffer.from(input.text, 'utf8');
+      } else if (typeof input.fetchUrl === 'string') {
+        const upstream = await fetch(input.fetchUrl);
+        if (!upstream.ok) throw new Error(`could not fetch that URL (${upstream.status})`);
+        bytes = Buffer.from(await upstream.arrayBuffer());
+      } else {
+        throw new Error('nothing to save: pass dataUrl, text or fetchUrl');
+      }
+
+      await writeFile(full, bytes);
+      const meta = {
+        title: input.meta?.title ?? clean,
+        notes: input.meta?.notes ?? '',
+        tags: input.meta?.tags ?? [],
+        ...input.meta,
+        savedAt: new Date().toISOString(),
+      };
+      await writeFile(sidecarFor(full), JSON.stringify(meta, null, 2));
+      console.log(`library: saved ${rel} (${bytes.length} bytes)`);
+      return send(200, { rel, bytes: bytes.length, meta });
+    }
+
+    // PATCH /library/meta -> edit notes and tags after the fact
+    if (url.pathname === '/library/meta' && req.method === 'PATCH') {
+      const input = await body();
+      const [kind, name] = String(input.rel ?? '').split('/');
+      const { full } = safePath(kind, name);
+      const current = (await readMeta(full)) ?? {};
+      const meta = { ...current, ...input.meta, updatedAt: new Date().toISOString() };
+      await writeFile(sidecarFor(full), JSON.stringify(meta, null, 2));
+      return send(200, { rel: input.rel, meta });
+    }
+
+    // DELETE /library/item?rel=kind/name
+    if (url.pathname === '/library/item' && req.method === 'DELETE') {
+      const [kind, name] = String(url.searchParams.get('rel') ?? '').split('/');
+      const { full, rel } = safePath(kind, name);
+      await unlink(full);
+      await unlink(sidecarFor(full)).catch(() => {});
+      console.log(`library: removed ${rel}`);
+      return send(200, { removed: rel });
+    }
+
+    // GET /library/file/<kind>/<name> -> serve a saved asset back to the page
+    if (url.pathname.startsWith('/library/file/') && req.method === 'GET') {
+      const [kind, name] = url.pathname.replace('/library/file/', '').split('/');
+      const { full } = safePath(kind, decodeURIComponent(name ?? ''));
+      const data = await readFile(full);
+      const ext = path.extname(full).slice(1).toLowerCase();
+      const mime = Object.entries(EXT_BY_MIME).find(([, e]) => e === ext)?.[0] ?? 'application/octet-stream';
+      res.writeHead(200, { ...CORS, 'Content-Type': mime, 'Content-Length': data.length });
+      res.end(data);
+      return undefined;
+    }
+
+    return send(404, { error: { message: `no library route for ${req.method} ${url.pathname}` } });
+  } catch (err) {
+    return send(400, { error: { message: err.message } });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
@@ -77,8 +222,14 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       status: 'ok',
       providers: Object.keys(PROVIDERS),
+      library: LIBRARY_ROOT,
       keysFromEnv: Object.fromEntries(Object.entries(PROVIDERS).map(([name, p]) => [name, Boolean(p.key())])),
     }));
+    return;
+  }
+
+  if (url.pathname.startsWith('/library')) {
+    await handleLibrary(req, res, url);
     return;
   }
 

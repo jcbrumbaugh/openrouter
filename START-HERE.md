@@ -118,6 +118,31 @@ it.
 
 ---
 
+## Keeping your work
+
+Your Mac already has a **`my-work`** folder inside the project. The app can now
+write to it directly.
+
+**To save something:** add a **Save to Library** node (left sidebar, under
+Library) and drag the result into it — a mesh, a video, an image. Give it a
+title, some tags and notes, then Run. The file lands in `my-work/models`,
+`my-work/videos` or `my-work/images`, with your notes saved beside it.
+
+**To find it later:** click the **Library** tab at the top of the left sidebar.
+Everything you have saved is there with a thumbnail. Search by title, tag or
+note. Edit notes and tags right in the panel — changes save as you go. **Add to
+canvas** brings an image back into the graph to use again.
+
+**Sticky notes:** the **Note** node is a place to write down what worked — a
+seed, a setting, an idea for next time. It is saved with the graph, and you can
+wire it into a Save node so a result is filed together with the thinking behind
+it.
+
+Nothing leaves your Mac. There is no account and no cloud copy; if you delete
+the `my-work` folder, it is gone.
+
+---
+
 ## Getting updates
 
 **Double-click `update.command`** in the project folder. It downloads the latest

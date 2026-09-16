@@ -357,6 +357,36 @@ app's only external dependency, `<model-viewer>`, fetched from a CDN the first
 time a mesh appears and never before. If it cannot load, the download link is
 still there — macOS previews `.glb` with Quick Look.
 
+## The local library
+
+Everything the app saves goes into the project's **`my-work/`** folder and
+nowhere else. There is no cloud account and no database: the gateway is the only
+thing here that touches disk, it is bound to localhost, and every path it
+accepts is forced to stay inside `my-work`.
+
+Wire a **Save to Library** node after any result — a mesh, a video, an image.
+It writes the file into `my-work/models`, `videos` or `images`, alongside a
+`.meta.json` sidecar holding the title, tags and notes. Because the sidecar is
+plain JSON next to the file, the library stays readable and portable: copy the
+folder and your work and your notes travel together.
+
+A page-only `blob:` result is read out of the browser and uploaded as bytes; a
+remote provider URL is fetched by the gateway. Either way you end up with the
+actual file, not a link that expires.
+
+The sidebar's **Library** tab browses it: thumbnails, search across titles, tags
+and notes, filter by kind, and edit notes or tags in place — those edits write
+straight back to the sidecar. **Add to canvas** pulls an image back in as an
+Image node pointing at the file on disk, which survives reloads in a way a
+`blob:` URL never can.
+
+The **Note** node is a sticky note on the canvas, saved with the graph, and its
+text can also be wired into a Save node so a result is filed with the thinking
+behind it.
+
+If you move the gateway to another port, the app remembers where it is
+(`setGateway` in the console, or the default `http://localhost:8787`).
+
 ## When a provider has a bad day
 
 Gateway errors (502/503/504) are the providers' own infrastructure, and they

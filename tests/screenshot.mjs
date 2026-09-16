@@ -45,12 +45,22 @@ await page.evaluate(() => {
   });
   const video = store.addNode('runway-video', { x: 700, y: 420 }, { credential: keystore.defaultFor('runway') });
   const videoPreview = store.addNode('preview', { x: 1040, y: 420 });
+  const notes = store.addNode('note', { x: 40, y: 700 }, {
+    value: 'Quad off while iterating so it previews.\nTurn it on for the take to rig.\n40k faces looked right at this scale.',
+  });
+  const save = store.addNode('save', { x: 1040, y: 60 }, {
+    title: 'armor torso',
+    tags: 'armor, hero prop',
+    notes: 'first pass',
+  });
 
   store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'front' });
   store.addEdge({ node: tripo.id, port: 'model' }, { node: meshPreview.id, port: 'value' });
   store.addEdge({ node: tripo.id, port: 'render' }, { node: video.id, port: 'image' });
   store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
   store.addEdge({ node: video.id, port: 'video' }, { node: videoPreview.id, port: 'value' });
+  store.addEdge({ node: tripo.id, port: 'model' }, { node: save.id, port: 'asset' });
+  store.addEdge({ node: notes.id, port: 'text' }, { node: save.id, port: 'notes' });
   canvas.fitView();
 });
 await page.waitForTimeout(400);

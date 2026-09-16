@@ -36,6 +36,10 @@ let openaiCalls = 0;
 let openaiLastBody = null;
 let openaiEditParts = null;
 const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+// Stands in for the gateway's library, kept in memory so the real my-work
+// folder is never written to by the tests.
+const library = new Map();
 let runwayLastBody = null;
 
 function mockApi(req, res, url, body, origin, rawBody) {
@@ -63,6 +67,40 @@ function mockApi(req, res, url, body, origin, rawBody) {
   }
   if (url.pathname === '/health') {
     return json(200, { status: 'ok', providers: ['openrouter', 'tripo', 'runway'], keysFromEnv: {} });
+  }
+  if (url.pathname === '/library/list' && req.method === 'GET') {
+    return json(200, { root: '/tmp/test-library', items: [...library.values()] });
+  }
+  if (url.pathname === '/library/save' && req.method === 'POST') {
+    if (!body?.kind || !body?.name) return json(400, { error: { message: 'kind and name are required' } });
+    const payload = body.dataUrl ?? body.text ?? body.fetchUrl ?? '';
+    const rel = `${body.kind}/${body.name}`;
+    library.set(rel, {
+      kind: body.kind,
+      name: body.name,
+      rel,
+      bytes: payload.length,
+      modified: new Date().toISOString(),
+      meta: { ...body.meta, savedAt: new Date().toISOString() },
+      carried: body.dataUrl ? 'dataUrl' : body.fetchUrl ? 'fetchUrl' : 'text',
+    });
+    return json(200, { rel, bytes: payload.length, meta: body.meta });
+  }
+  if (url.pathname === '/library/meta' && req.method === 'PATCH') {
+    const item = library.get(body?.rel);
+    if (!item) return json(404, { error: { message: 'not found' } });
+    item.meta = { ...item.meta, ...body.meta };
+    return json(200, { rel: body.rel, meta: item.meta });
+  }
+  if (url.pathname === '/library/item' && req.method === 'DELETE') {
+    const rel = url.searchParams.get('rel');
+    library.delete(rel);
+    return json(200, { removed: rel });
+  }
+  if (url.pathname.startsWith('/library/file/')) {
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    res.end(Buffer.from(PIXEL, 'base64'));
+    return undefined;
   }
   if (url.pathname === '/openai/v1/images/generations' && req.method === 'POST') {
     if (req.headers.authorization !== 'Bearer openai-key') {
@@ -214,7 +252,7 @@ function startServer() {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const url = new URL(req.url, origin);
     if (['/health', '/fetch'].includes(url.pathname)
-      || ['/api/', '/hy3d/', '/tripo/', '/runway/', '/openai/'].some((p) => url.pathname.startsWith(p))) {
+      || ['/api/', '/hy3d/', '/tripo/', '/runway/', '/openai/', '/library'].some((p) => url.pathname.startsWith(p))) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       let body = null;
@@ -956,7 +994,64 @@ try {
     /name="image"/.test(openaiEditParts?.raw ?? '') && /name="prompt"/.test(openaiEditParts?.raw ?? ''),
     (openaiEditParts?.raw ?? '').slice(0, 120));
 
-  // 25. credential dropdowns are scoped per provider
+  // 25. the local library: save work, then find it again with its notes
+  const saved = await page.evaluate(async (origin) => {
+    const { store, engine, setGateway } = window.nodeSpace;
+    setGateway(origin); // point the library at the mock instead of a real gateway
+    const source = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d' && n.outputs?.model);
+    const notes = store.addNode('note', { x: -300, y: 6200 }, { value: 'quad off so it previews' });
+    const save = store.addNode('save', { x: 40, y: 6200 }, {
+      title: 'armor torso',
+      tags: 'armor, hero prop',
+      notes: 'first pass, 40k faces',
+    });
+    store.addEdge({ node: source.id, port: 'model' }, { node: save.id, port: 'asset' });
+    store.addEdge({ node: notes.id, port: 'text' }, { node: save.id, port: 'notes' });
+    await engine.run({ targets: [save.id], force: true });
+    const node = store.state.nodes.get(save.id);
+    return { status: node.status, message: node.message, path: node.outputs?.path ?? null, stamp: node.data._saved ?? null };
+  }, base);
+  check('a Save node writes to the library', saved.status === 'done', `${saved.status}: ${saved.message}`);
+  check('it saves under the right kind', saved.path?.startsWith('models/'), saved.path ?? 'none');
+  check('the node reports where it went', /my-work\/models\//.test(saved.stamp ?? ''), saved.stamp ?? 'none');
+
+  const stored = [...library.values()].at(-1);
+  check('the title becomes the file name', /armor torso/.test(stored?.name ?? ''), stored?.name ?? 'none');
+  check('tags are stored as a list',
+    JSON.stringify(stored?.meta?.tags) === JSON.stringify(['armor', 'hero prop']),
+    JSON.stringify(stored?.meta?.tags));
+  check('node notes and wired notes are both kept',
+    /first pass, 40k faces/.test(stored?.meta?.notes ?? '') && /quad off so it previews/.test(stored?.meta?.notes ?? ''),
+    stored?.meta?.notes ?? 'none');
+  check('a page-only blob is uploaded as bytes, not as a dead link', stored?.carried === 'dataUrl', String(stored?.carried));
+
+  // the panel lists it, filters it, and can edit its notes
+  const panel = await page.evaluate(async () => {
+    document.getElementById('tab-library').click();
+    await new Promise((r) => setTimeout(r, 400));
+    const before = document.querySelectorAll('.lib-item').length;
+    const search = document.querySelector('.lib-search');
+    search.value = 'nothing matches this';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    const filtered = document.querySelectorAll('.lib-item').length;
+    search.value = 'armor';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    const refound = document.querySelectorAll('.lib-item').length;
+    const notes = document.querySelector('.lib-notes');
+    notes.value = 'edited from the panel';
+    notes.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { before, filtered, refound, status: document.querySelector('.lib-status')?.textContent };
+  });
+  check('the library panel lists saved work', panel.before >= 1, JSON.stringify(panel));
+  check('search narrows the list', panel.filtered === 0, String(panel.filtered));
+  check('search finds by tag or title', panel.refound >= 1, String(panel.refound));
+  check('the panel says how much is stored', /item/.test(panel.status ?? ''), panel.status ?? 'none');
+  check('notes edited in the panel are written back',
+    /edited from the panel/.test([...library.values()].map((i) => i.meta?.notes ?? '').join(' ')),
+    JSON.stringify([...library.values()].map((i) => i.meta?.notes)));
+
+  // 26. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

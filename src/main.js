@@ -7,6 +7,7 @@ import { registerHunyuan3dNodes } from './nodes/hunyuan3d-nodes.js';
 import { registerTripoNodes } from './nodes/tripo-nodes.js';
 import { registerRunwayNodes } from './nodes/runway-nodes.js';
 import { registerOpenAiNodes } from './nodes/openai-nodes.js';
+import { registerLibraryNodes } from './nodes/library-nodes.js';
 import { createStore } from './core/store.js';
 import { createEngine } from './core/engine.js';
 import { createKeystore } from './providers/keystore.js';
@@ -15,7 +16,9 @@ import { createCanvas } from './ui/canvas.js';
 import { createPalette, createQuickAdd } from './ui/palette.js';
 import { createKeysModal } from './ui/keys-modal.js';
 import { createLog } from './ui/log.js';
-import { checkGateway, DEFAULT_GATEWAY } from './providers/gateway.js';
+import { createLibraryPanel } from './ui/library-panel.js';
+import { fileUrl } from './providers/library.js';
+import { checkGateway, getGateway, setGateway } from './providers/gateway.js';
 import { media } from './core/types.js';
 import { clear, h } from './util/dom.js';
 
@@ -28,6 +31,7 @@ registerHunyuan3dNodes(registry);
 registerTripoNodes(registry);
 registerRunwayNodes(registry);
 registerOpenAiNodes(registry);
+registerLibraryNodes(registry);
 
 const keystore = createKeystore();
 const store = createStore(registry);
@@ -103,6 +107,43 @@ const quickAdd = createQuickAdd(document.body, {
   registry,
   onPick: (def, position) => store.addNode(def.type, position),
 });
+
+// ---- sidebar: nodes / library ------------------------------------------
+
+const libraryPanel = createLibraryPanel(document.getElementById('library'), {
+  log,
+  // Pull something saved back onto the canvas as a node that points at the file
+  // on disk, so it survives reloads in a way a blob URL never could.
+  onInsert: (item) => {
+    const centre = canvas.centerOfView();
+    const url = fileUrl(item.rel);
+    if (item.kind === 'images') {
+      store.addNode('image-input', { x: centre.x - 130, y: centre.y }, { url });
+    } else {
+      const note = store.addNode('note', { x: centre.x - 130, y: centre.y }, {
+        value: `${item.meta?.title ?? item.name}\nmy-work/${item.rel}\n${url}${item.meta?.notes ? `\n\n${item.meta.notes}` : ''}`,
+      });
+      store.select(note.id);
+    }
+    log(`added ${item.name} to the canvas`);
+  },
+});
+
+const tabs = {
+  nodes: { button: document.getElementById('tab-nodes'), panel: document.getElementById('palette') },
+  library: { button: document.getElementById('tab-library'), panel: document.getElementById('library') },
+};
+
+function showTab(name) {
+  for (const [key, tab] of Object.entries(tabs)) {
+    tab.button.classList.toggle('active', key === name);
+    tab.panel.classList.toggle('hidden', key !== name);
+  }
+  if (name === 'library') libraryPanel.load();
+}
+
+tabs.nodes.button.addEventListener('click', () => showTab('nodes'));
+tabs.library.button.addEventListener('click', () => showTab('library'));
 
 createPalette(document.getElementById('palette'), {
   registry,
@@ -193,6 +234,9 @@ store.on('run:start', (order) => {
 store.on('run:end', ({ failed }) => {
   setRunning(false);
   if (!failed) log('run finished');
+  // A Save node may have just written something; keep the browser honest.
+  const saved = [...store.state.nodes.values()].some((n) => n.type === 'save' && n.status === 'done');
+  if (saved && !tabs.library.panel.classList.contains('hidden')) libraryPanel.load();
 });
 
 runBtn.addEventListener('click', () => engine.run({}));
@@ -247,11 +291,11 @@ const gatewayLabel = document.getElementById('gateway-label');
 let gatewayWasUp = null;
 
 async function refreshGateway() {
-  const { up } = await checkGateway(DEFAULT_GATEWAY);
+  const { up } = await checkGateway(getGateway());
   gatewayEl.dataset.state = up ? 'up' : 'down';
   gatewayLabel.textContent = up ? 'gateway on' : 'gateway off';
   gatewayEl.title = up
-    ? `Local gateway is running on ${DEFAULT_GATEWAY}. Tripo and Runway will work.`
+    ? `Local gateway is running on ${getGateway()}. Tripo, Runway and your library will work.`
     : 'Local gateway is not running. OpenRouter still works; Tripo and Runway need it. Close this window and double-click start.command again.';
   if (gatewayWasUp !== null && gatewayWasUp !== up) {
     log(up ? 'gateway is up - Tripo and Runway are available' : 'gateway went away - Tripo and Runway will fail until it is back', up ? 'info' : 'warn');
@@ -267,4 +311,4 @@ setRunning(false);
 boot();
 
 // Exposed for the smoke tests in tests/ and for poking around in devtools.
-window.nodeSpace = { store, engine, registry, keystore, canvas, log };
+window.nodeSpace = { store, engine, registry, keystore, canvas, log, libraryPanel, setGateway, getGateway };
