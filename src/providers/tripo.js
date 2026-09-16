@@ -56,6 +56,28 @@ function networkHint(baseUrl, err) {
   );
 }
 
+// Polls one task to completion. Shared by every Tripo node.
+export async function pollTask({ baseUrl, apiKey, taskId, signal, everyMs, timeoutMs, onTick }) {
+  const deadline = Date.now() + timeoutMs;
+  for (let attempt = 1; ; attempt += 1) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for Tripo task ${taskId}.`);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, everyMs);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    });
+    const task = await getTask({ baseUrl, apiKey, taskId, signal });
+    const status = String(task.status ?? 'unknown').toLowerCase();
+    onTick?.(status, task.progress, attempt);
+    if (TERMINAL_OK.includes(status)) return task;
+    if (TERMINAL_BAD.includes(status)) {
+      throw new Error(`Tripo task ${status}${task.message ? `: ${task.message}` : ''}.`);
+    }
+  }
+}
+
 export async function createTask({ baseUrl, apiKey, body, signal }) {
   const url = join(baseUrl, '/task');
   let response;

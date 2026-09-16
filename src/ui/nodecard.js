@@ -25,14 +25,29 @@ function loadModelViewer() {
   return modelViewerPromise;
 }
 
-function renderModel3d(value) {
-  const links = h('div', { class: 'model-links' }, [
-    h('a', { class: 'media-link', href: value.url, download: value.name ?? 'model.glb' }, 'download .glb'),
-    h('a', { class: 'media-link', href: value.url, target: '_blank', rel: 'noreferrer' }, 'open'),
-  ]);
-  const stage = h('div', { class: 'model-stage' }, [h('span', { class: 'model-note' }, 'loading 3D viewer...')]);
-  const wrap = h('div', { class: 'preview' }, [stage, links]);
+const VIEWABLE = /\.(glb|gltf)$/i;
 
+function renderModel3d(value) {
+  const name = value.name ?? 'model.glb';
+  const extension = (name.split('.').pop() ?? 'glb').toLowerCase();
+  const links = h('div', { class: 'model-links' }, [
+    h('a', { class: 'media-link', href: value.url, download: name }, `download .${extension}`),
+    h('a', { class: 'media-link', href: value.sourceUrl ?? value.url, target: '_blank', rel: 'noreferrer' }, 'open'),
+  ]);
+  const stage = h('div', { class: 'model-stage' });
+  const wrap = h('div', { class: 'preview' }, [stage, links]);
+  const note = (text) => {
+    clear(stage);
+    stage.append(h('span', { class: 'model-note' }, text));
+  };
+
+  // The viewer only speaks glTF; anything else is download-only.
+  if (!VIEWABLE.test(name)) {
+    note(`.${extension} files cannot be previewed here - download it and open it in your 3D app.`);
+    return wrap;
+  }
+
+  note('loading 3D viewer...');
   loadModelViewer()
     .then(() => {
       clear(stage);
@@ -45,13 +60,15 @@ function renderModel3d(value) {
         'shadow-intensity': '1',
         exposure: '1',
       });
+      // A mesh served straight from a provider CDN usually fails here on CORS;
+      // say so rather than showing an empty box.
+      viewer.addEventListener('error', () => {
+        note('The mesh could not be loaded into the viewer. Use the download link - the file itself is fine.');
+      });
       stage.append(viewer);
     })
     .catch(() => {
-      clear(stage);
-      stage.append(
-        h('span', { class: 'model-note' }, 'No inline viewer available here - use the download link (macOS previews .glb with Quick Look).'),
-      );
+      note('No inline viewer available (the viewer library could not load). Use the download link - macOS previews .glb with Quick Look.');
     });
 
   return wrap;

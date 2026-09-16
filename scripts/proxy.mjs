@@ -77,6 +77,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Provider asset URLs (Tripo meshes, for example) are on CDNs that do not
+  // send CORS headers, so the page cannot read them even though it can link to
+  // them. This relays one through. Bound to localhost only, https only.
+  if (url.pathname === '/fetch') {
+    const remote = url.searchParams.get('url');
+    if (!remote || !/^https:\/\//i.test(remote)) {
+      res.writeHead(400, { ...CORS, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Pass ?url= with an https URL.' } }));
+      return;
+    }
+    try {
+      const upstream = await fetch(remote);
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, {
+        ...CORS,
+        'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        'Content-Length': buffer.length,
+      });
+      res.end(buffer);
+      console.log(`GET fetch ${new URL(remote).host} -> ${upstream.status} (${buffer.length} bytes)`);
+    } catch (err) {
+      res.writeHead(502, { ...CORS, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: `could not fetch that URL: ${err.message}` } }));
+    }
+    return;
+  }
+
   const target = route(url.pathname);
   if (!target) {
     res.writeHead(404, { ...CORS, 'Content-Type': 'application/json' });
@@ -127,7 +154,7 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  API gateway on http://localhost:${PORT}`);
   for (const [name, provider] of Object.entries(PROVIDERS)) {
     const has = provider.key() ? 'key from env' : 'key from the browser';

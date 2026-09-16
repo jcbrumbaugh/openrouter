@@ -298,6 +298,18 @@ export function createCanvas(root, ctx) {
   });
 
   window.addEventListener('keydown', (event) => {
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && !typing) {
+      event.preventDefault();
+      const copies = [...store.state.selection].map((id) => store.duplicateNode(id)).filter(Boolean);
+      if (copies.length) {
+        store.select(copies.map((c) => c.id));
+        ctx.log(`duplicated ${copies.length} node${copies.length > 1 ? 's' : ''}`);
+      }
+      return;
+    }
+
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;

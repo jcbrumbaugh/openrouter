@@ -39,6 +39,13 @@ function mockApi(req, res, url, body, origin) {
   };
   apiCalls.push(`${req.method} ${url.pathname}`);
 
+  if (url.pathname === '/fetch') {
+    const remote = url.searchParams.get('url');
+    if (!remote) return json(400, { error: { message: 'no url' } });
+    res.writeHead(200, { 'Content-Type': 'model/gltf-binary' });
+    res.end(Buffer.from('glTF relayed bytes'));
+    return;
+  }
   if (url.pathname === '/health') {
     return json(200, { status: 'ok', providers: ['openrouter', 'tripo', 'runway'], keysFromEnv: {} });
   }
@@ -48,8 +55,16 @@ function mockApi(req, res, url, body, origin) {
   if (url.pathname === '/tripo/v2/openapi/task' && req.method === 'POST') {
     if (req.headers.authorization !== 'Bearer tripo-key') return json(401, { code: 1002, message: 'invalid token' });
     tripoLastBody = body;
+    // Follow-up tasks (convert/texture/stylize) reference an existing mesh.
+    if (body?.original_model_task_id) return json(200, { code: 0, data: { task_id: 'tripo_task_2' } });
     tripoPolls = 0;
     return json(200, { code: 0, data: { task_id: 'tripo_task_1' } });
+  }
+  if (url.pathname === '/tripo/v2/openapi/task/tripo_task_2') {
+    return json(200, {
+      code: 0,
+      data: { status: 'success', output: { pbr_model: `${origin}/tests/fixtures/model.glb` } },
+    });
   }
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_1') {
     tripoPolls += 1;
@@ -154,7 +169,8 @@ function startServer() {
   const server = http.createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const url = new URL(req.url, origin);
-    if (url.pathname === '/health' || ['/api/', '/hy3d/', '/tripo/', '/runway/'].some((p) => url.pathname.startsWith(p))) {
+    if (['/health', '/fetch'].includes(url.pathname)
+      || ['/api/', '/hy3d/', '/tripo/', '/runway/'].some((p) => url.pathname.startsWith(p))) {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       let body = null;
@@ -491,7 +507,7 @@ try {
     });
     const out = store.addNode('preview', { x: 1000, y: 2700 });
 
-    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'image' });
+    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'front' });
     store.addEdge({ node: tripo.id, port: 'render' }, { node: video.id, port: 'image' });
     store.addEdge({ node: prompt.id, port: 'text' }, { node: video.id, port: 'prompt' });
     store.addEdge({ node: video.id, port: 'video' }, { node: out.id, port: 'value' });
@@ -507,6 +523,13 @@ try {
 
   check('Tripo task completes', pipeline.tripo.status === 'done', `${pipeline.tripo.status}: ${pipeline.tripo.message}`);
   check('Tripo returns a mesh', pipeline.tripo.outputs?.model?.type === 'model3d', JSON.stringify(pipeline.tripo.outputs?.model));
+  check('the mesh is pulled local so it can be previewed',
+    pipeline.tripo.outputs?.model?.url?.startsWith('blob:'),
+    pipeline.tripo.outputs?.model?.url ?? 'none');
+  check('the mesh remembers where it came from',
+    pipeline.tripo.outputs?.model?.sourceUrl?.endsWith('/tests/fixtures/model.glb'),
+    pipeline.tripo.outputs?.model?.sourceUrl ?? 'none');
+  check('Tripo exposes its task id for chaining', pipeline.tripo.outputs?.taskId === 'tripo_task_1', String(pipeline.tripo.outputs?.taskId));
   check('Tripo returns a rendered preview image', pipeline.tripo.outputs?.render?.type === 'image', JSON.stringify(pipeline.tripo.outputs?.render));
   check('a local image is uploaded and sent as a file_token',
     tripoLastBody?.file?.file_token === 'tok_abc' && tripoLastBody?.type === 'image_to_model',
@@ -523,7 +546,94 @@ try {
     pipeline.video.outputs?.video?.url?.endsWith('/tests/fixtures/clip.mp4'),
     pipeline.video.outputs?.video?.url ?? 'none');
 
-  // 15. credential dropdowns are scoped per provider
+  // 15. several views feed one reconstruction
+  const multiview = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const view = (label, y) => store.addNode('image-input', { x: -300, y }, {
+      _file: { url: png, name: `${label}.png`, mime: 'image/png' },
+    });
+    const front = view('front', 3400);
+    const left = view('left', 3560);
+    const right = view('right', 3720);
+    const tripo = store.addNode('tripo-3d', { x: 40, y: 3400 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: front.id, port: 'image' }, { node: tripo.id, port: 'front' });
+    store.addEdge({ node: left.id, port: 'image' }, { node: tripo.id, port: 'left' });
+    store.addEdge({ node: right.id, port: 'image' }, { node: tripo.id, port: 'right' });
+    await engine.run({ targets: [tripo.id], force: true });
+    return { status: store.state.nodes.get(tripo.id).status, message: store.state.nodes.get(tripo.id).message };
+  }, base);
+  check('a multiview run completes', multiview.status === 'done', `${multiview.status}: ${multiview.message}`);
+  check('multiple views switch the task to multiview_to_model', tripoLastBody?.type === 'multiview_to_model', String(tripoLastBody?.type));
+  check('views are sent in front/left/back/right order with gaps kept',
+    Array.isArray(tripoLastBody?.files)
+      && tripoLastBody.files.length === 4
+      && tripoLastBody.files[0]?.file_token === 'tok_abc'
+      && tripoLastBody.files[1]?.file_token === 'tok_abc'
+      && tripoLastBody.files[2] === null
+      && tripoLastBody.files[3]?.file_token === 'tok_abc',
+    JSON.stringify(tripoLastBody?.files));
+
+  const turboRejected = await page.evaluate(async () => {
+    const { store, engine } = window.nodeSpace;
+    const tripo = [...store.state.nodes.values()].reverse().find((n) => n.type === 'tripo-3d');
+    store.updateNodeData(tripo.id, { modelVersion: 'Turbo-v1.0-20250506' });
+    await engine.run({ targets: [tripo.id], force: true });
+    const message = store.state.nodes.get(tripo.id).message;
+    store.updateNodeData(tripo.id, { modelVersion: 'v3.1-20260211' });
+    return message;
+  });
+  check('Turbo plus multiview is refused with a reason', /Turbo does not accept multiple views/.test(turboRejected), turboRejected);
+
+  // 16. a finished mesh can be run through a follow-up task
+  const refined = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const source = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d' && n.outputs?.taskId);
+    const post = store.addNode('tripo-post', { x: 400, y: 3400 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+      mode: 'convert_model',
+      format: 'FBX',
+    });
+    store.addEdge({ node: source.id, port: 'taskId' }, { node: post.id, port: 'taskId' });
+    await engine.run({ targets: [post.id], force: true });
+    const node = store.state.nodes.get(post.id);
+    return { status: node.status, message: node.message, model: node.outputs?.model ?? null };
+  }, base);
+  check('a follow-up Tripo task completes', refined.status === 'done', `${refined.status}: ${refined.message}`);
+  check('the follow-up references the original task', tripoLastBody?.original_model_task_id === 'tripo_task_1', String(tripoLastBody?.original_model_task_id));
+  check('the requested export format is sent', tripoLastBody?.format === 'FBX', String(tripoLastBody?.format));
+  check('the converted file keeps its real extension', /\.fbx$/.test(refined.model?.name ?? ''), refined.model?.name ?? 'none');
+
+  // 17. duplicating a node, for trying variations side by side
+  const duplicated = await page.evaluate(() => {
+    const { store } = window.nodeSpace;
+    const source = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d');
+    store.select(source.id);
+    const before = store.state.nodes.size;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', metaKey: true, bubbles: true }));
+    const after = store.state.nodes.size;
+    const copy = [...store.state.nodes.values()].at(-1);
+    return {
+      added: after - before,
+      sameType: copy.type === source.type,
+      copiedSettings: copy.data.credential === source.data.credential && copy.data.modelVersion === source.data.modelVersion,
+      offset: copy.x !== source.x || copy.y !== source.y,
+      freshResult: copy.data._result === undefined,
+    };
+  });
+  check('Cmd+D duplicates the selected node', duplicated.added === 1 && duplicated.sameType, JSON.stringify(duplicated));
+  check('the copy keeps its settings', duplicated.copiedSettings === true, JSON.stringify(duplicated));
+  check('the copy sits beside the original with no stale result', duplicated.offset && duplicated.freshResult, JSON.stringify(duplicated));
+
+  // 18. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

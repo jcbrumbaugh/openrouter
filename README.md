@@ -86,6 +86,7 @@ instead (see [Keeping the key server-side](#keeping-the-key-server-side)).
 | Move / zoom | Drag empty canvas to pan, scroll to zoom, **Fit** to frame everything |
 | Run everything | **Run ▶** or `Ctrl`/`Cmd` + `Enter` |
 | Run one branch | The `▶` on a node header — runs just that node and its upstream |
+| Duplicate | Select a node and press `Cmd`/`Ctrl` + `D` |
 | Force re-run | **Force** ignores cached results |
 
 Results are cached per node against its inputs and settings, so re-running only
@@ -199,6 +200,16 @@ does not, so the GitHub Pages copy is OpenRouter-only in Safari.
 
 ## Tripo (hosted image to 3D)
 
+### Multiple views
+
+The node has four image inputs: **Front**, **Left**, **Back**, **Right**.
+Connect Front alone and it runs `image_to_model`. Connect any of the others and
+it switches to `multiview_to_model`, sending the views in that fixed order with
+gaps preserved, which is how Tripo maps an image to a side. More views means
+less guessing about the parts of the object the camera never saw. Turbo does not
+accept multiple views; the node says so instead of failing at the API.
+
+
 Get a key at [platform.tripo3d.ai](https://platform.tripo3d.ai), add it under
 **Keys** with provider *Tripo*, and pick it on the node — provider-scoped
 dropdowns mean a Runway key never shows up in a Tripo slot.
@@ -209,8 +220,36 @@ and referenced by token; a public image URL is passed straight through. Model
 versions run from `v2.5` up to `v3.1`, with Turbo for quick drafts. **Quad
 topology** is worth turning on if you plan to rig the result.
 
-Outputs: `Model` (the GLB), `Render` (Tripo's preview image), and the raw task
-JSON. Tripo's URLs are signed and expire, so download anything worth keeping.
+Outputs: `Model` (the GLB), `Render` (Tripo's preview image), `Task` (the task
+id), and the raw task JSON. Tripo's URLs are signed and expire, so download
+anything worth keeping.
+
+Meshes are pulled through the local gateway into the page rather than linked
+directly: provider CDNs serve no CORS headers, so a viewer pointed at the remote
+URL renders an empty box. If that download fails the node falls back to the
+remote URL and says the preview will be download-only.
+
+### Follow-up tasks
+
+`Tripo Refine` takes the **Task** output of a Tripo 3D node and runs another
+task against that same mesh:
+
+- **Export another format** — GLTF/GLB, USDZ, FBX, OBJ, STL, 3MF, with optional
+  quad topology, a face limit and texture size. Anything that is not glTF is
+  download-only in the preview, which the node says rather than showing a blank.
+- **Re-texture** — new materials on the same geometry, optionally steered by a
+  text prompt, with its own seed.
+- **Stylize** — lego, voxel, voronoi or minecraft.
+
+### Iterating
+
+Two ways to try variations:
+
+- **Cmd+D** duplicates the selected node beside itself, with its settings but
+  without its last result. Give each copy a different seed and hit Run to
+  compare them side by side.
+- **Seed 0** means random every run, so pressing **Force** re-rolls. A non-zero
+  seed makes a run repeatable.
 
 ## Runway video (including Seedance)
 

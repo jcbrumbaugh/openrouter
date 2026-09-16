@@ -117,6 +117,22 @@ it.
 
 ---
 
+## Getting more out of it
+
+**Use several photos of the same object.** The Tripo node has four image inputs:
+Front, Left, Back and Right. Connect one Image node to each and it reconstructs
+from all of them, which gets the back of an object right instead of inventing
+it. Front alone still works.
+
+**Try variations.** Click a node and press `Cmd+D` to duplicate it. Change the
+Seed on the copy, then Run. Two versions sit side by side for comparison.
+
+**Do more with a finished mesh.** Drag from the Tripo node's **Task** dot into a
+**Tripo Refine** node to export a different file format (FBX for Blender, USDZ
+for Apple AR, STL for printing), re-texture the same shape, or stylize it.
+
+---
+
 ## If something goes wrong
 
 | What you see | What it means |

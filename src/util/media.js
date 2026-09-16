@@ -59,3 +59,23 @@ export function dataUrlToBlob(dataUrl) {
   const extension = (mime.split('/')[1] ?? 'jpg').replace('jpeg', 'jpg').split('+')[0];
   return { blob: new Blob([bytes], { type: mime }), mime, extension };
 }
+
+// Pulls a provider asset through the local gateway and hands back a blob URL.
+// Needed because provider CDNs (Tripo's mesh host, for one) serve no CORS
+// headers: the page can link to those files but cannot read them, so a viewer
+// pointed straight at the remote URL silently renders nothing.
+export async function fetchViaGateway(url, gatewayOrigin, signal) {
+  const endpoint = `${gatewayOrigin.replace(/\/+$/, '')}/fetch?url=${encodeURIComponent(url)}`;
+  const response = await fetch(endpoint, { signal });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      detail = (await response.json())?.error?.message ?? detail;
+    } catch {
+      /* keep the status text */
+    }
+    throw new Error(`Could not download the result through the gateway: ${detail}`);
+  }
+  const blob = await response.blob();
+  return { url: URL.createObjectURL(blob), bytes: blob.size };
+}

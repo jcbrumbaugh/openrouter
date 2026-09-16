@@ -36,6 +36,19 @@ export function createStore(registry) {
     return node;
   }
 
+  // Copies a node beside itself, keeping its settings but not its last result,
+  // so variations can sit side by side.
+  function duplicateNode(id, offset = { x: 40, y: 40 }) {
+    const node = state.nodes.get(id);
+    if (!node) return null;
+    const data = {};
+    for (const [key, value] of Object.entries(node.data)) {
+      if (key === '_result' || key === '_preview') continue;
+      data[key] = value;
+    }
+    return addNode(node.type, { x: node.x + offset.x, y: node.y + offset.y }, data);
+  }
+
   function removeNode(id) {
     if (!state.nodes.has(id)) return;
     for (const edge of [...state.edges.values()]) {
@@ -246,6 +259,7 @@ export function createStore(registry) {
     on: bus.on,
     emit: bus.emit,
     addNode,
+    duplicateNode,
     removeNode,
     moveNode,
     updateNodeData,
