@@ -5,6 +5,7 @@ import { asText, media } from '../core/types.js';
 import { dataUrlToBlob, fetchViaGateway } from '../util/media.js';
 import { describeMesh, inspectGlb, sniffMesh } from '../util/glb.js';
 import { DEFAULT_GATEWAY, gatewayOrigin } from '../providers/gateway.js';
+import { requireKeyFor } from '../providers/keyshapes.js';
 import {
   DEFAULT_TRIPO_BASE,
   TRIPO_MODEL_VERSIONS,
@@ -141,7 +142,7 @@ export function registerTripoNodes(registry) {
       timeoutSeconds: 600,
     },
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
-      const apiKey = keystore.require(data.credential, 'Tripo key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'tripo');
       const baseUrl = data.baseUrl || DEFAULT_TRIPO_BASE;
 
       const connected = VIEWS.filter((view) => inputs[view]?.url);
@@ -297,7 +298,7 @@ export function registerTripoNodes(registry) {
       timeoutSeconds: 600,
     },
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
-      const apiKey = keystore.require(data.credential, 'Tripo key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'tripo');
       const baseUrl = data.baseUrl || DEFAULT_TRIPO_BASE;
       const source = asText(inputs.taskId).trim();
       if (!source) throw new Error('Connect the Task output of a Tripo 3D node.');

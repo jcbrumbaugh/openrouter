@@ -444,7 +444,7 @@ try {
   check('found empty canvas space for quick add', spot !== null);
   await page.locator('#canvas').dblclick({ position: spot ?? { x: 600, y: 700 } });
   check('double-click opens quick add', await page.locator('.quick-add:not(.hidden)').isVisible());
-  await page.locator('.quick-add .quick-search').fill('seed');
+  await page.locator('.quick-add .quick-search').fill('hunyuan');
   const quickMatches = await page.locator('.quick-add .palette-item').count();
   check('quick add filters by name', quickMatches === 1, `matches=${quickMatches}`);
   await page.locator('.quick-add .palette-item').first().click();
@@ -1051,7 +1051,52 @@ try {
     /edited from the panel/.test([...library.values()].map((i) => i.meta?.notes ?? '').join(' ')),
     JSON.stringify([...library.values()].map((i) => i.meta?.notes)));
 
-  // 26. credential dropdowns are scoped per provider
+  // 26. a key from the wrong service is caught before a request is spent
+  const mixedUp = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    // A Runway key (key_...) selected on an OpenRouter node.
+    const runwayish = keystore.save({ label: 'runway shaped', value: 'key_abc123', provider: 'openrouter' });
+    const prompt = store.addNode('text', { x: -300, y: 6600 }, { value: 'a test clip' });
+    const node = store.addNode('or-video', { x: 40, y: 6600 }, {
+      credential: runwayish,
+      baseUrl: `${baseUrl}/api/v1`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: node.id, port: 'prompt' });
+    await engine.run({ targets: [node.id], force: true });
+    const message = store.state.nodes.get(node.id).message;
+    keystore.remove(runwayish);
+    store.removeNode(node.id);
+    store.removeNode(prompt.id);
+    return message;
+  }, base);
+  check('a Runway-shaped key on an OpenRouter node is caught', /looks like a Runway key/.test(mixedUp), mixedUp);
+  check('and it points at the node that would work', /Runway Video node/.test(mixedUp), mixedUp);
+
+  const wrongProvider = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const prompt = store.addNode('text', { x: -300, y: 6900 }, { value: 'x' });
+    const node = store.addNode('or-chat', { x: 40, y: 6900 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/api/v1`,
+    });
+    store.addEdge({ node: prompt.id, port: 'text' }, { node: node.id, port: 'prompt' });
+    await engine.run({ targets: [node.id], force: true });
+    const message = store.state.nodes.get(node.id).message;
+    store.removeNode(node.id);
+    store.removeNode(prompt.id);
+    return message;
+  }, base);
+  check('a key saved under another service is refused by name',
+    /saved as a Tripo key/.test(wrongProvider), wrongProvider);
+
+  check('the Seedance node points at Runway', await page.evaluate(() => {
+    const def = window.nodeSpace.registry.get('or-video');
+    return /Runway Video node/.test(def.hint) && def.title === 'OpenRouter Video';
+  }));
+
+  // 27. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

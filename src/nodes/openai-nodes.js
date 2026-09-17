@@ -3,6 +3,7 @@
 
 import { asText, media } from '../core/types.js';
 import { dataUrlToBlob } from '../util/media.js';
+import { requireKeyFor } from '../providers/keyshapes.js';
 import {
   DEFAULT_OPENAI_BASE,
   IMAGE_QUALITIES,
@@ -61,7 +62,7 @@ export function registerOpenAiNodes(registry) {
     // choosing a favourite would re-run the generation and bill you again.
     cacheIgnore: ['_result', '_images', '_selected'],
     async run({ data, inputs, signal, keystore, log, setData }) {
-      const apiKey = keystore.require(data.credential, 'OpenAI key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'openai');
       const baseUrl = data.baseUrl || DEFAULT_OPENAI_BASE;
       const prompt = asText(inputs.prompt).trim();
       if (!prompt) throw new Error('The prompt is empty.');

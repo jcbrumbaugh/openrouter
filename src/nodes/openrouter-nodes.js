@@ -5,6 +5,7 @@
 import { asText, media } from '../core/types.js';
 import { DEFAULT_BASE_URL, chatCompletion, listModels, request, sleep, userMessage } from '../providers/openrouter.js';
 import { findMediaUrl, extractChatText, getPath, renderTemplate } from '../util/extract.js';
+import { requireKeyFor } from '../providers/keyshapes.js';
 
 const STATUS_DONE = ['succeeded', 'success', 'completed', 'complete', 'done', 'finished', 'ready'];
 const STATUS_FAILED = ['failed', 'error', 'errored', 'cancelled', 'canceled', 'rejected'];
@@ -44,7 +45,7 @@ export function registerOpenRouterNodes(registry) {
       { id: 'text', label: 'Slugs', type: 'text' },
     ],
     fields: [
-      { id: 'credential', kind: 'credential', label: 'API key' },
+      { id: 'credential', kind: 'credential', label: 'API key', provider: 'openrouter' },
       { id: 'filter', kind: 'text', label: 'Filter', placeholder: 'seedance' },
       baseUrlField,
       { id: '_result', kind: 'preview', label: '' },
@@ -52,7 +53,7 @@ export function registerOpenRouterNodes(registry) {
     defaults: { credential: '', filter: '', baseUrl: '' },
     cacheable: false,
     async run({ data, signal, keystore, log, setData }) {
-      const apiKey = keystore.require(data.credential, 'OpenRouter key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'openrouter');
       log('GET /models');
       const payload = await listModels({ baseUrl: data.baseUrl, apiKey, signal });
       const all = payload?.data ?? [];
@@ -82,7 +83,7 @@ export function registerOpenRouterNodes(registry) {
       { id: 'json', label: 'JSON', type: 'json' },
     ],
     fields: [
-      { id: 'credential', kind: 'credential', label: 'API key' },
+      { id: 'credential', kind: 'credential', label: 'API key', provider: 'openrouter' },
       { id: 'model', kind: 'model', label: 'Model', placeholder: 'anthropic/claude-sonnet-4.5' },
       { id: 'system', kind: 'textarea', label: 'System', rows: 2, placeholder: 'optional system prompt' },
       { id: 'temperature', kind: 'number', label: 'Temperature', step: '0.1', min: 0, max: 2 },
@@ -100,7 +101,7 @@ export function registerOpenRouterNodes(registry) {
     },
     cacheable: true,
     async run({ data, inputs, signal, keystore, log, setData }) {
-      const apiKey = keystore.require(data.credential, 'OpenRouter key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'openrouter');
       if (!data.model) throw new Error('Pick a model.');
       const messages = [];
       if (data.system?.trim()) messages.push({ role: 'system', content: data.system });
@@ -141,14 +142,14 @@ export function registerOpenRouterNodes(registry) {
       { id: 'json', label: 'JSON', type: 'json' },
     ],
     fields: [
-      { id: 'credential', kind: 'credential', label: 'API key' },
+      { id: 'credential', kind: 'credential', label: 'API key', provider: 'openrouter' },
       { id: 'model', kind: 'model', label: 'Model', placeholder: 'google/gemini-2.5-flash-image' },
       baseUrlField,
       { id: '_result', kind: 'preview', label: '' },
     ],
     defaults: { credential: '', model: 'google/gemini-2.5-flash-image', baseUrl: '' },
     async run({ data, inputs, signal, keystore, log, setData }) {
-      const apiKey = keystore.require(data.credential, 'OpenRouter key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'openrouter');
       log(`image -> ${data.model}`);
       const payload = await chatCompletion({
         baseUrl: data.baseUrl,
@@ -174,10 +175,10 @@ export function registerOpenRouterNodes(registry) {
 
   registry.register({
     type: 'or-video',
-    title: 'Video (Seedance)',
+    title: 'OpenRouter Video',
     category: 'OpenRouter',
     accent: '#c49bff',
-    hint: 'Text- or image-to-video. Submits, then polls until the clip is ready.',
+    hint: 'Video through OpenRouter, if your account has a video model. For Seedance, use the Runway Video node.',
     inputs: [
       { id: 'prompt', label: 'Prompt', type: 'text', required: true },
       { id: 'image', label: 'First frame', type: 'image' },
@@ -188,7 +189,8 @@ export function registerOpenRouterNodes(registry) {
       { id: 'json', label: 'JSON', type: 'json' },
     ],
     fields: [
-      { id: 'credential', kind: 'credential', label: 'API key' },
+      { id: '_where', kind: 'info', label: '', text: 'Seedance lives on Runway - use the Runway Video node. This node is for video models hosted on OpenRouter itself.' },
+      { id: 'credential', kind: 'credential', label: 'API key', provider: 'openrouter' },
       { id: 'model', kind: 'model', label: 'Model', placeholder: 'bytedance/seedance-2.5' },
       {
         id: 'mode',
@@ -253,7 +255,9 @@ export function registerOpenRouterNodes(registry) {
     },
     cacheable: true,
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
-      const apiKey = keystore.require(data.credential, 'OpenRouter key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'openrouter', {
+        nodeHint: 'For Seedance, use the Runway Video node - Runway carries it as seedance2_5.',
+      });
       const prompt = asText(inputs.prompt);
       const imageUrl = inputs.image?.url;
       if (!prompt.trim()) throw new Error('The prompt is empty.');

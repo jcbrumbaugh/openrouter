@@ -188,6 +188,7 @@ for Apple AR, STL for printing), re-texture the same shape, or stylize it.
 | The 3D preview says it cannot show the file | Check whether **Quad topology** is ticked on the Tripo node. Quads cannot be stored in the format browsers display, so Tripo returns FBX instead. Untick it to preview; leave it on when you want the file for rigging |
 | A node says `no result yet - press Run` | That node has not run. The small ▶ on a node runs it and everything feeding *into* it, but nothing after it. **Run** at the top runs the whole graph |
 | `gateway off` | Close the Terminal window, double-click `start.command` again |
+| `looks like a <service> key` | The key chosen on that node belongs to a different service. The message names which node to use instead |
 | `401` on a node | That key is wrong, expired, or from another account — paste a fresh one |
 | `402` on a node | That account is out of credit, or needs a payment method |
 | `502`, `503` or `504` | The provider's own servers are having a moment. Nothing is wrong with your key or your image. Status checks retry themselves; if a generation failed to start, nothing was charged — just press Run again |

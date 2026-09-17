@@ -3,6 +3,7 @@
 
 import { asText, media } from '../core/types.js';
 import { sleep } from '../util/media.js';
+import { requireKeyFor } from '../providers/keyshapes.js';
 import {
   DEFAULT_RUNWAY_BASE,
   RUNWAY_BAD,
@@ -60,7 +61,7 @@ export function registerRunwayNodes(registry) {
       timeoutSeconds: 900,
     },
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
-      const apiKey = keystore.require(data.credential, 'Runway key');
+      const apiKey = requireKeyFor(keystore, data.credential, 'runway');
       const baseUrl = data.baseUrl || DEFAULT_RUNWAY_BASE;
       const promptImage = inputs.image?.url;
       if (!promptImage) throw new Error('Connect an image to drive the video.');

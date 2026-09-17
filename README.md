@@ -305,6 +305,19 @@ Like Tripo and Runway, OpenAI sends no CORS headers, so this goes through the
 local gateway (`/openai`), which also picks up `OPENAI_API_KEY` from the
 environment if you would rather not keep the key in the browser.
 
+## Which node for which service
+
+Node titles name their provider, and each node only accepts keys for that
+provider: the dropdown is filtered, the stored provider is checked, and the key's
+own prefix is checked before any request is sent (`sk-or-` OpenRouter, `key_`
+Runway, `tsk_` Tripo, `sk-` OpenAI). Choosing a Runway key on an OpenRouter node
+now fails immediately with "looks like a Runway key... use the Runway Video
+node" instead of a 401 from a service that was never going to accept it.
+
+**Seedance is on Runway**, not OpenRouter — use **Runway Video**. The
+**OpenRouter Video** node exists for video models hosted on OpenRouter itself
+and says so on its face.
+
 ## Runway video (including Seedance)
 
 Runway routes third-party models, so Seedance is reachable there:
