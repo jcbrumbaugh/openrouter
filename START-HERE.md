@@ -180,8 +180,16 @@ polycount between 500 and 25,000, and it builds a mesh with clean edge flow
 using Tripo's P2.0 model. Wire its Model output into a Preview and that is the
 whole chain.
 
-(It can also take the **Task** output of a Tripo 3D node instead, to clean up a
-mesh you already generated without paying to generate it again.)
+It takes other things too:
+
+- **A model you already have** — add a **3D Model** node (Input group), upload a
+  GLB, FBX, OBJ or STL, and wire it into Smart Mesh's *Model* input. Your own
+  sculpts and scans can be retopologised without generating anything.
+- **The Task output of a Tripo 3D node** — to clean up a mesh you already
+  generated, without paying to generate it again.
+
+Models saved in your library come back the same way: Library tab → *Add to
+canvas* on a mesh gives you a 3D Model node wired to that file.
 
 **Set a polygon budget.** The Tripo node has a *Polygon budget* slider. Left at
 `auto` Tripo decides. Moving it caps how many faces the mesh has, which matters

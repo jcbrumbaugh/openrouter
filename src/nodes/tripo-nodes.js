@@ -12,7 +12,7 @@ import {
   TRIPO_MODEL_VERSIONS,
   createTask,
   pollTask,
-  uploadImage,
+  uploadFile,
 } from '../providers/tripo.js';
 
 const VIEWS = ['front', 'left', 'back', 'right'];
@@ -25,7 +25,7 @@ async function resolveFile({ imageUrl, baseUrl, apiKey, signal, log }) {
   if (imageUrl.startsWith('data:')) {
     const { blob, extension } = dataUrlToBlob(imageUrl);
     log('uploading image to Tripo');
-    const token = await uploadImage({ baseUrl, apiKey, blob, filename: `input.${extension}`, signal });
+    const token = await uploadFile({ baseUrl, apiKey, blob, filename: `input.${extension}`, signal });
     return { type: extension === 'png' ? 'png' : 'jpg', file_token: token };
   }
   throw new Error('That image is neither a URL nor uploadable data.');
@@ -58,6 +58,35 @@ async function localiseMesh({ url, baseUrl, stem, signal, log }) {
     log(`could not bring the mesh local, preview will be download-only: ${err.message}`, 'warn');
     return media('model3d', url, { name: `${stem}.glb`, sourceUrl: url, previewable: false });
   }
+}
+
+// Tripo works on tasks, not files, so a model you already have becomes a task
+// through import_model - the API behind the Studio's "Upload 3D Model".
+async function importModel({ model, baseUrl, apiKey, signal, log }) {
+  const url = model?.url;
+  if (!url) throw new Error('That model has no file behind it.');
+
+  let blob;
+  if (url.startsWith('data:')) {
+    blob = dataUrlToBlob(url).blob;
+  } else {
+    log('fetching the model file');
+    const response = await fetch(url.startsWith('blob:') ? url : `${gatewayOrigin(baseUrl)}/fetch?url=${encodeURIComponent(url)}`, { signal })
+      .catch(() => null)
+      ?? await fetch(url, { signal });
+    if (!response?.ok) throw new Error('Could not read that model file to upload it.');
+    blob = await response.blob();
+  }
+
+  const megabytes = blob.size / (1024 * 1024);
+  if (megabytes > 150) {
+    throw new Error(`That model is ${megabytes.toFixed(0)} MB; Tripo accepts up to 150 MB.`);
+  }
+
+  const name = model.name ?? 'model.glb';
+  log(`uploading ${name} (${Math.round(blob.size / 1024)} KB) to Tripo`);
+  const token = await uploadFile({ baseUrl, apiKey, blob, filename: name, signal });
+  return createTask({ baseUrl, apiKey, body: { type: 'import_model', file: { type: name.split('.').pop()?.toLowerCase(), file_token: token } }, signal });
 }
 
 function pickModelUrl(output = {}) {
@@ -278,6 +307,7 @@ export function registerTripoNodes(registry) {
     hint: 'Image in, topology-ready mesh out: generates, then retopologises with P2.0.',
     inputs: [
       { id: 'image', label: 'Image', type: 'image' },
+      { id: 'model', label: 'Model', type: 'model3d' },
       { id: 'taskId', label: 'Task', type: 'text' },
     ],
     outputs: [
@@ -288,7 +318,7 @@ export function registerTripoNodes(registry) {
     ],
     fields: [
       { id: 'credential', kind: 'credential', label: 'Tripo key', provider: 'tripo' },
-      { id: '_about', kind: 'info', label: '', text: 'Connect an image and this does both steps. Or wire the Task output of a Tripo 3D node to retopologise a mesh you already made.' },
+      { id: '_about', kind: 'info', label: '', text: 'Takes an image (generates, then retopologises), a 3D model you already have (GLB, FBX, OBJ, STL up to 150 MB), or the Task output of a Tripo 3D node.' },
       {
         id: 'genModelVersion',
         kind: 'select',
@@ -372,12 +402,27 @@ export function registerTripoNodes(registry) {
       let sourceTask = asText(inputs.taskId).trim();
       let render = null;
 
-      if (sourceTask && inputs.image?.url) {
-        log('both an image and a Task are connected - using the Task', 'warn');
+      const connected = [
+        sourceTask && 'Task',
+        inputs.model?.url && 'Model',
+        inputs.image?.url && 'Image',
+      ].filter(Boolean);
+      if (connected.length > 1) {
+        log(`${connected.join(' and ')} are connected - using ${connected[0]}`, 'warn');
+      }
+
+      // A model you already have is uploaded and imported, which costs no
+      // generation: retopology runs straight on your own mesh.
+      if (!sourceTask && inputs.model?.url) {
+        log('step 1 of 2: importing your model');
+        sourceTask = await importModel({ model: inputs.model, baseUrl, apiKey, signal, log });
+        await poll(sourceTask, 'importing');
       }
 
       if (!sourceTask) {
-        if (!inputs.image?.url) throw new Error('Connect an image, or the Task output of a Tripo 3D node.');
+        if (!inputs.image?.url) {
+          throw new Error('Connect an image, a 3D model, or the Task output of a Tripo 3D node.');
+        }
         const file = await resolveFile({ imageUrl: inputs.image.url, baseUrl, apiKey, signal, log });
         const genBody = {
           type: 'image_to_model',

@@ -54,6 +54,35 @@ export function registerCoreNodes(registry) {
   });
 
   registry.register({
+    type: 'model-input',
+    title: '3D Model',
+    category: 'Input',
+    accent: '#f087b8',
+    hint: 'A model you already have: upload a GLB, FBX, OBJ or STL, or point at one in your library.',
+    inputs: [],
+    outputs: [{ id: 'model', label: 'Model', type: 'model3d' }],
+    fields: [
+      { id: '_file', kind: 'file', label: 'Upload', accept: '.glb,.gltf,.fbx,.obj,.stl,model/gltf-binary' },
+      { id: 'url', kind: 'text', label: 'or URL', placeholder: 'http://localhost:8787/library/file/models/...' },
+      { id: '_result', kind: 'preview', label: '' },
+    ],
+    defaults: { url: '' },
+    run({ data, setData }) {
+      const url = data._file?.url || data.url;
+      if (!url) throw new Error('Upload a model file or paste a URL to one.');
+      const name = data._file?.name ?? url.split('/').pop()?.split('?')[0] ?? 'model.glb';
+      const value = media('model3d', url, {
+        name,
+        mime: data._file?.mime,
+        previewable: /\.(glb|gltf)$/i.test(name),
+        format: name.split('.').pop()?.toUpperCase(),
+      });
+      setData({ _result: value });
+      return { model: value };
+    },
+  });
+
+  registry.register({
     type: 'template',
     title: 'Template',
     category: 'Transform',

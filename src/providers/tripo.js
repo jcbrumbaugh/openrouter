@@ -136,8 +136,9 @@ export async function getTask({ baseUrl, apiKey, taskId, signal, onRetry }) {
   }, { signal, onRetry, attempts: 4 });
 }
 
-// Tripo accepts a public URL directly; anything local has to be uploaded first.
-export async function uploadImage({ baseUrl, apiKey, blob, filename, signal }) {
+// Tripo accepts a public URL for images; anything local - an image or a 3D model
+// being imported - has to be uploaded first and referenced by token.
+export async function uploadFile({ baseUrl, apiKey, blob, filename, signal }) {
   const form = new FormData();
   form.append('file', blob, filename);
   const response = await fetch(join(baseUrl, '/upload'), {
@@ -148,6 +149,8 @@ export async function uploadImage({ baseUrl, apiKey, blob, filename, signal }) {
   });
   const payload = await parse(response, 'image upload');
   const token = payload?.data?.image_token ?? payload?.data?.file_token;
-  if (!token) throw new Error('Tripo accepted the upload but returned no image token.');
+  if (!token) throw new Error('Tripo accepted the upload but returned no file token.');
   return token;
 }
+
+export const uploadImage = uploadFile;

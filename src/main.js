@@ -127,6 +127,8 @@ const libraryPanel = createLibraryPanel(document.getElementById('library'), {
     const url = fileUrl(item.rel);
     if (item.kind === 'images') {
       store.addNode('image-input', { x: centre.x - 130, y: centre.y }, { url });
+    } else if (item.kind === 'models') {
+      store.addNode('model-input', { x: centre.x - 130, y: centre.y }, { url });
     } else {
       const note = store.addNode('note', { x: centre.x - 130, y: centre.y }, {
         value: `${item.meta?.title ?? item.name}\nmy-work/${item.rel}\n${url}${item.meta?.notes ? `\n\n${item.meta.notes}` : ''}`,

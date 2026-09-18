@@ -272,8 +272,19 @@ Smart Mesh** node takes either:
 - **an image** — it generates first and then retopologises, both steps in the one
   node, which is the whole route in three nodes: `Image → Tripo Smart Mesh →
   Preview`; or
+- **a 3D model you already have** — a GLB, FBX, OBJ or STL, up to Tripo's 150 MB
+  limit. It is uploaded and turned into a task with `import_model` (the API
+  behind the Studio's "Upload 3D Model"), then retopologised. No generation is
+  involved, so this works on sculpts and scans that never came from Tripo; or
 - **a Task** from a Tripo 3D node — retopology only, against a mesh you already
   paid to generate.
+
+The **3D Model** node in the Input group is how a model gets in: upload a file,
+or paste a URL — including a `my-work` library URL, which is what the Library
+panel's *Add to canvas* now inserts for saved meshes.
+
+When more than one input is connected the order of precedence is Task, then
+Model, then Image, and the log says which one it used.
 
 Either way you choose **quads or triangles**, a **polycount** (500–25,000, the
 Studio's range) and whether to bake textures onto the result.

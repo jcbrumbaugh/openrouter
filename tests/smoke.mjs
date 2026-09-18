@@ -140,6 +140,10 @@ function mockApi(req, res, url, body, origin, rawBody) {
     }
     // Follow-up tasks (convert/texture/stylize/smart mesh) reference an existing mesh.
     if (body?.original_model_task_id) return json(200, { code: 0, data: { task_id: 'tripo_task_2' } });
+    if (body?.type === 'import_model') {
+      if (!body?.file?.file_token) return json(400, { code: 2003, message: 'file token required' });
+      return json(200, { code: 0, data: { task_id: 'tripo_import_1' } });
+    }
     if (tripoParallel) {
       const id = `tripo_par_${tripoBodies.length}`;
       return json(200, { code: 0, data: { task_id: id } });
@@ -159,6 +163,9 @@ function mockApi(req, res, url, body, origin, rawBody) {
         },
       },
     });
+  }
+  if (url.pathname === '/tripo/v2/openapi/task/tripo_import_1') {
+    return json(200, { code: 0, data: { status: 'success', output: {} } });
   }
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_2') {
     return json(200, {
@@ -304,7 +311,7 @@ function startServer() {
 // with no gateway, and the viewer CDN while offline. Chromium logs each as a resource notice. Real script errors arrive
 // through the 'pageerror' handler and are never filtered.
 const EXPECTED_NOISE =
-  /status of 401|status of 502|status of 400|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
+  /status of 401|status of 502|status of 400|status of 404|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
 const realErrors = (list) => list.filter((text) => !EXPECTED_NOISE.test(text));
 
 // ---- assertions ----------------------------------------------------------
@@ -1330,7 +1337,66 @@ try {
   check('an override does reach the request', tripoLastBody?.model_version === 'P-v9.9-future', String(tripoLastBody?.model_version));
   check('and a rejected override surfaces the reason', /version value is invalid/.test(overridden), overridden);
 
-  // 31. credential dropdowns are scoped per provider
+  // 31. retopologise a model you already have: upload, import, then smart mesh
+  tripoBodies.length = 0;
+  const ownModel = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    // A small GLB standing in for a file dragged off disk.
+    const glb = btoa(String.fromCharCode(0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 80, 0, 0, 0));
+    const source = store.addNode('model-input', { x: -300, y: 9400 }, {
+      _file: { url: `data:model/gltf-binary;base64,${glb}`, name: 'my-sculpt.glb', mime: 'model/gltf-binary' },
+    });
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 9400 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+      topology: 'quad',
+      faceLimit: 3000,
+    });
+    const preview = store.addNode('preview', { x: 420, y: 9400 });
+    store.addEdge({ node: source.id, port: 'model' }, { node: smartNode.id, port: 'model' });
+    store.addEdge({ node: smartNode.id, port: 'model' }, { node: preview.id, port: 'value' });
+    await engine.run({ targets: [preview.id], force: true });
+    const node = store.state.nodes.get(smartNode.id);
+    return { status: node.status, message: node.message, hasModel: Boolean(node.outputs?.model) };
+  }, base);
+  check('a model you already have can be retopologised', ownModel.status === 'done', `${ownModel.status}: ${ownModel.message}`);
+  check('it is imported rather than generated',
+    tripoBodies[0]?.type === 'import_model' && !tripoBodies.some((b) => b.type === 'image_to_model'),
+    JSON.stringify(tripoBodies.map((b) => b.type)));
+  check('the uploaded file is referenced by token',
+    tripoBodies[0]?.file?.file_token === 'tok_abc' && tripoBodies[0]?.file?.type === 'glb',
+    JSON.stringify(tripoBodies[0]?.file));
+  check('smart mesh then runs on the imported task',
+    tripoBodies[1]?.type === 'highpoly_to_lowpoly' && tripoBodies[1]?.original_model_task_id === 'tripo_import_1',
+    JSON.stringify([tripoBodies[1]?.type, tripoBodies[1]?.original_model_task_id]));
+  check('your own settings still apply', tripoBodies[1]?.face_limit === 3000 && tripoBodies[1]?.quad === true,
+    JSON.stringify([tripoBodies[1]?.face_limit, tripoBodies[1]?.quad]));
+  check('it returns the retopologised mesh', ownModel.hasModel === true, JSON.stringify(ownModel));
+
+  const bigFile = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    // 160 MB of base64 would be slow to build; fake the size check instead.
+    const huge = store.addNode('model-input', { x: -300, y: 9800 }, {
+      url: 'https://example.com/enormous.glb',
+    });
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 9800 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: huge.id, port: 'model' }, { node: smartNode.id, port: 'model' });
+    await engine.run({ targets: [smartNode.id], force: true });
+    const message = store.state.nodes.get(smartNode.id).message;
+    store.removeNode(smartNode.id);
+    store.removeNode(huge.id);
+    return message;
+  }, base);
+  check('an unreadable model file fails with a reason', /Could not read that model file|150 MB/.test(bigFile), bigFile);
+
+  // 32. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);
