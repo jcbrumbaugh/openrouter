@@ -159,7 +159,13 @@ function mockApi(req, res, url, body, origin, rawBody) {
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_2') {
     return json(200, {
       code: 0,
-      data: { status: 'success', output: { pbr_model: `${origin}/tests/fixtures/model.fbx` } },
+      data: {
+        status: 'success',
+        output: {
+          pbr_model: `${origin}/tests/fixtures/model.fbx`,
+          rendered_image: `${origin}/tests/fixtures/render.png`,
+        },
+      },
     });
   }
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_1') {
@@ -1198,7 +1204,79 @@ try {
   check('the topology choice is sent', tripoLastBody?.quad === true, String(tripoLastBody?.quad));
   check('Smart Mesh returns a mesh', smart.hasModel === true, JSON.stringify(smart));
 
-  // 29. credential dropdowns are scoped per provider
+  // 29. Smart Mesh straight from an image: generate, then retopologise
+  tripoBodies.length = 0;
+  const fromImage = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const image = store.addNode('image-input', { x: -300, y: 7700 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgo=', name: 'torso.png', mime: 'image/png' },
+    });
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 7700 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+      topology: 'triangle',
+      faceLimit: 8000,
+    });
+    const preview = store.addNode('preview', { x: 420, y: 7700 });
+    store.addEdge({ node: image.id, port: 'image' }, { node: smartNode.id, port: 'image' });
+    store.addEdge({ node: smartNode.id, port: 'model' }, { node: preview.id, port: 'value' });
+    await engine.run({ targets: [preview.id], force: true });
+    const node = store.state.nodes.get(smartNode.id);
+    return {
+      status: node.status,
+      message: node.message,
+      hasModel: Boolean(node.outputs?.model),
+      hasRender: Boolean(node.outputs?.render),
+      previewGotIt: store.state.nodes.get(preview.id).data._preview?.type ?? null,
+    };
+  }, base);
+  check('image straight into Smart Mesh works', fromImage.status === 'done', `${fromImage.status}: ${fromImage.message}`);
+  check('it generates first', tripoBodies[0]?.type === 'image_to_model', String(tripoBodies[0]?.type));
+  check('then retopologises with P2.0',
+    tripoBodies[1]?.type === 'highpoly_to_lowpoly' && tripoBodies[1]?.model_version === 'P-v2.0-20251226',
+    JSON.stringify([tripoBodies[1]?.type, tripoBodies[1]?.model_version]));
+  check('the retopology runs on the mesh it just generated',
+    tripoBodies[1]?.original_model_task_id === 'tripo_task_1', String(tripoBodies[1]?.original_model_task_id));
+  check('the chosen polycount is used', tripoBodies[1]?.face_limit === 8000, String(tripoBodies[1]?.face_limit));
+  check('triangles do not send quad', tripoBodies[1]?.quad === undefined, String(tripoBodies[1]?.quad));
+  check('it returns a mesh and the generation render', fromImage.hasModel && fromImage.hasRender, JSON.stringify(fromImage));
+  check('the mesh reaches a Preview node', fromImage.previewGotIt === 'model3d', String(fromImage.previewGotIt));
+
+  // an explicit Task still skips the generation step
+  tripoBodies.length = 0;
+  const fromTask = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const source = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d' && n.outputs?.taskId);
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 8100 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: source.id, port: 'taskId' }, { node: smartNode.id, port: 'taskId' });
+    await engine.run({ targets: [smartNode.id], force: true });
+    return store.state.nodes.get(smartNode.id).status;
+  }, base);
+  check('a Task input skips straight to retopology', fromTask === 'done' && tripoBodies.length === 1,
+    `${fromTask}, ${tripoBodies.length} task(s)`);
+
+  const noInput = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const orphan = store.addNode('tripo-smart-mesh', { x: 40, y: 8400 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+    });
+    await engine.run({ targets: [orphan.id], force: true });
+    const message = store.state.nodes.get(orphan.id).message;
+    store.removeNode(orphan.id);
+    return message;
+  }, base);
+  check('with nothing connected it says what to connect', /Connect an image/.test(noInput), noInput);
+
+  // 30. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

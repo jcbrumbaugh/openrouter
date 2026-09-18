@@ -266,14 +266,19 @@ task against that same mesh:
 
 The Studio's **Smart Mesh** tab is the `highpoly_to_lowpoly` task in the API, and
 its "P2.0" is the model version `P-v2.0-20251226` — the only version that task
-takes. The **Tripo Smart Mesh** node runs it against a mesh you already
-generated: wire the Tripo 3D node's **Task** output into it, choose **quads or
-triangles**, set the **polycount** (500–25,000, the same range the Studio
-offers), and optionally bake textures onto the result.
+takes. That task always works from a mesh that already exists, so the **Tripo
+Smart Mesh** node takes either:
 
-That is the Studio's flow too: generate, then retopologise. Generating and
-retopologising are separate tasks, so you can try several polycounts against one
-generation without paying to generate again.
+- **an image** — it generates first and then retopologises, both steps in the one
+  node, which is the whole route in three nodes: `Image → Tripo Smart Mesh →
+  Preview`; or
+- **a Task** from a Tripo 3D node — retopology only, against a mesh you already
+  paid to generate.
+
+Either way you choose **quads or triangles**, a **polycount** (500–25,000, the
+Studio's range) and whether to bake textures onto the result. Keeping the Task
+route means you can try several polycounts against one generation without
+generating again.
 
 ### Generations per run
 

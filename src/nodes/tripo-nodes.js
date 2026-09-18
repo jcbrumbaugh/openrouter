@@ -275,23 +275,35 @@ export function registerTripoNodes(registry) {
     title: 'Tripo Smart Mesh',
     category: '3D',
     accent: '#5ed3c4',
-    hint: 'The Studio\'s Smart Mesh: retopologises a generated mesh with P2.0 at a chosen polycount.',
-    inputs: [{ id: 'taskId', label: 'Task', type: 'text', required: true }],
+    hint: 'Image in, topology-ready mesh out: generates, then retopologises with P2.0.',
+    inputs: [
+      { id: 'image', label: 'Image', type: 'image' },
+      { id: 'taskId', label: 'Task', type: 'text' },
+    ],
     outputs: [
       { id: 'model', label: 'Model', type: 'model3d' },
+      { id: 'render', label: 'Render', type: 'image' },
       { id: 'taskId', label: 'Task', type: 'text' },
       { id: 'json', label: 'JSON', type: 'json' },
     ],
     fields: [
       { id: 'credential', kind: 'credential', label: 'Tripo key', provider: 'tripo' },
-      { id: '_about', kind: 'info', label: '', text: 'Runs on a mesh from a Tripo 3D node - wire its Task output in here.' },
+      { id: '_about', kind: 'info', label: '', text: 'Connect an image and this does both steps. Or wire the Task output of a Tripo 3D node to retopologise a mesh you already made.' },
+      {
+        id: 'genModelVersion',
+        kind: 'select',
+        label: 'Generation model',
+        options: TRIPO_MODEL_VERSIONS,
+        hideWhen: { _hasTask: true },
+      },
+      { id: 'texture', kind: 'checkbox', label: 'Texture the generated mesh' },
       {
         id: 'topology',
         kind: 'select',
         label: 'Topology',
         options: [
-          { value: 'quad', label: 'Quads (rigging, clean edge flow)' },
           { value: 'triangle', label: 'Triangles (previews in the browser)' },
+          { value: 'quad', label: 'Quads - clean edge flow for rigging, returns FBX' },
         ],
       },
       {
@@ -310,7 +322,9 @@ export function registerTripoNodes(registry) {
     ],
     defaults: {
       credential: '',
-      topology: 'quad',
+      genModelVersion: 'v3.1-20260211',
+      texture: true,
+      topology: 'triangle',
       faceLimit: 5000,
       bake: true,
       modelVersion: SMART_MESH_VERSION,
@@ -321,38 +335,69 @@ export function registerTripoNodes(registry) {
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
       const apiKey = requireKeyFor(keystore, data.credential, 'tripo');
       const baseUrl = data.baseUrl || DEFAULT_TRIPO_BASE;
-      const source = asText(inputs.taskId).trim();
-      if (!source) throw new Error('Connect the Task output of a Tripo 3D node.');
+      const everyMs = Math.max(1, Number(data.pollSeconds) || 5) * 1000;
+      const timeoutMs = (Number(data.timeoutSeconds) || 600) * 1000;
+      const poll = (taskId, stage) => pollTask({
+        baseUrl,
+        apiKey,
+        taskId,
+        signal,
+        everyMs,
+        timeoutMs,
+        onTick: (status, progress, attempt) => {
+          setStatus(`${stage}: ${status}${typeof progress === 'number' ? ` ${progress}%` : ''}`);
+          if (attempt === 1 || attempt % 6 === 0) log(`${stage} ${taskId}: ${status}`);
+        },
+        onRetry: (err, attempt, delay) => {
+          log(`status check failed (${err.message}) - retrying in ${delay / 1000}s, the job is still running`, 'warn');
+        },
+      });
+
+      // Two ways in: an image (generate first, then retopologise) or the Task
+      // output of a mesh already generated (retopologise only). The API's
+      // highpoly_to_lowpoly always works from an existing task, so an image
+      // means doing both steps here rather than making you wire two nodes.
+      let sourceTask = asText(inputs.taskId).trim();
+      let render = null;
+
+      if (sourceTask && inputs.image?.url) {
+        log('both an image and a Task are connected - using the Task', 'warn');
+      }
+
+      if (!sourceTask) {
+        if (!inputs.image?.url) throw new Error('Connect an image, or the Task output of a Tripo 3D node.');
+        const file = await resolveFile({ imageUrl: inputs.image.url, baseUrl, apiKey, signal, log });
+        const genBody = {
+          type: 'image_to_model',
+          file,
+          model_version: data.genModelVersion || 'v3.1-20260211',
+          texture: data.texture !== false,
+          pbr: data.texture !== false,
+        };
+        log(`step 1 of 2: generating with ${genBody.model_version}`);
+        sourceTask = await createTask({ baseUrl, apiKey, body: genBody, signal });
+        const genTask = await poll(sourceTask, 'generating');
+        render = genTask.output?.rendered_image ? media('image', genTask.output.rendered_image) : null;
+      }
 
       const body = {
         type: 'highpoly_to_lowpoly',
-        original_model_task_id: source,
+        original_model_task_id: sourceTask,
         model_version: data.modelVersion || SMART_MESH_VERSION,
         face_limit: Math.max(500, Number(data.faceLimit) || 5000),
         bake: data.bake !== false,
       };
       if (data.topology === 'quad') body.quad = true;
 
-      log(`POST /task highpoly_to_lowpoly (${body.model_version}, ${body.face_limit} faces, ${data.topology})`);
+      log(`smart mesh: ${body.model_version}, ${body.face_limit} faces, ${data.topology}`);
       const taskId = await createTask({ baseUrl, apiKey, body, signal });
-      const task = await pollTask({
-        baseUrl,
-        apiKey,
-        taskId,
-        signal,
-        everyMs: Math.max(1, Number(data.pollSeconds) || 5) * 1000,
-        timeoutMs: (Number(data.timeoutSeconds) || 600) * 1000,
-        onTick: (status, progress, attempt) => {
-          setStatus(`${status}${typeof progress === 'number' ? ` ${progress}%` : ''}`);
-          if (attempt === 1 || attempt % 6 === 0) log(`task ${taskId}: ${status}`);
-        },
-      });
+      const task = await poll(taskId, 'smart mesh');
 
       const modelUrl = pickModelUrl(task.output);
       if (!modelUrl) throw new Error('Tripo finished but returned no model URL.');
       const model = await localiseMesh({ url: modelUrl, baseUrl, stem: `tripo-smart-${taskId}`, signal, log });
       setData({ _result: model });
-      return { model, taskId, json: task };
+      return { model, render, taskId, json: task };
     },
   });
 

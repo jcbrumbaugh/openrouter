@@ -174,10 +174,14 @@ Seed on the copy, then Run. Two versions sit side by side for comparison.
 to 2 or 4, press Run, and each result appears as a thumbnail. Click the one you
 like; the others cost nothing more.
 
-**Clean up the mesh for rigging.** Drag the Tripo node's **Task** dot into a
-**Tripo Smart Mesh** node. That is the Studio's Smart Mesh: pick quads or
-triangles and a polycount between 500 and 25,000, and it rebuilds the mesh with
-clean edge flow using Tripo's P2.0 model.
+**Use Smart Mesh.** The **Tripo Smart Mesh** node is the Studio's Smart Mesh
+tab: connect an **Image** straight into it, pick quads or triangles and a
+polycount between 500 and 25,000, and it builds a mesh with clean edge flow
+using Tripo's P2.0 model. Wire its Model output into a Preview and that is the
+whole chain.
+
+(It can also take the **Task** output of a Tripo 3D node instead, to clean up a
+mesh you already generated without paying to generate it again.)
 
 **Set a polygon budget.** The Tripo node has a *Polygon budget* slider. Left at
 `auto` Tripo decides. Moving it caps how many faces the mesh has, which matters
