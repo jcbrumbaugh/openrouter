@@ -34,6 +34,7 @@ let runwayPolls = 0;
 let tripoLastBody = null;
 let tripoParallel = false;
 const tripoBodies = [];
+const modelUploads = [];
 let openaiCalls = 0;
 let openaiLastBody = null;
 let openaiEditParts = null;
@@ -122,7 +123,24 @@ function mockApi(req, res, url, body, origin, rawBody) {
     return json(200, { created: 1, data: [{ b64_json: PIXEL }, { b64_json: PIXEL }] });
   }
   if (url.pathname === '/tripo/v2/openapi/upload' && req.method === 'POST') {
+    // The real endpoint is images only; a mesh gets this exact refusal.
+    if (/\.(glb|gltf|fbx|obj|stl)"/i.test(rawBody?.toString('latin1') ?? '')) {
+      return json(400, { code: 2004, message: 'This image file type is not supported' });
+    }
     return json(200, { code: 0, data: { image_token: 'tok_abc' } });
+  }
+  if (url.pathname === '/tripo/model-upload' && req.method === 'POST') {
+    const ext = String(body?.name ?? '').split('.').pop()?.toLowerCase();
+    if (!['glb', 'gltf', 'fbx', 'obj', 'stl'].includes(ext)) {
+      return json(400, { error: { message: `Tripo imports GLB, GLTF, OBJ, FBX and STL; this is a .${ext}` } });
+    }
+    // The gateway fetches a remote model itself, so an unreachable URL fails
+    // there rather than in the page. Mirror that.
+    if (body?.fetchUrl && !body.fetchUrl.includes('127.0.0.1')) {
+      return json(400, { error: { message: 'could not fetch the model (404)' } });
+    }
+    modelUploads.push({ name: body.name, via: body.dataUrl ? 'dataUrl' : 'fetchUrl' });
+    return json(200, { file: { type: ext === 'gltf' ? 'glb' : ext, object: { bucket: 'b', key: `k/${body.name}` } } });
   }
   if (url.pathname === '/tripo/v2/openapi/task' && req.method === 'POST') {
     if (tripoCreateFails) {
@@ -141,7 +159,10 @@ function mockApi(req, res, url, body, origin, rawBody) {
     // Follow-up tasks (convert/texture/stylize/smart mesh) reference an existing mesh.
     if (body?.original_model_task_id) return json(200, { code: 0, data: { task_id: 'tripo_task_2' } });
     if (body?.type === 'import_model') {
-      if (!body?.file?.file_token) return json(400, { code: 2003, message: 'file token required' });
+      // A model arrives as a stored object; an uploaded image as a token.
+      if (!body?.file?.object && !body?.file?.file_token) {
+        return json(400, { code: 2003, message: 'file reference required' });
+      }
       return json(200, { code: 0, data: { task_id: 'tripo_import_1' } });
     }
     if (tripoParallel) {
@@ -1365,9 +1386,11 @@ try {
   check('it is imported rather than generated',
     tripoBodies[0]?.type === 'import_model' && !tripoBodies.some((b) => b.type === 'image_to_model'),
     JSON.stringify(tripoBodies.map((b) => b.type)));
-  check('the uploaded file is referenced by token',
-    tripoBodies[0]?.file?.file_token === 'tok_abc' && tripoBodies[0]?.file?.type === 'glb',
+  check('the uploaded model is referenced as a stored object',
+    tripoBodies[0]?.file?.object?.bucket === 'b' && tripoBodies[0]?.file?.type === 'glb',
     JSON.stringify(tripoBodies[0]?.file));
+  check('the model went through the model uploader, not the image one',
+    modelUploads.at(-1)?.name === 'my-sculpt.glb', JSON.stringify(modelUploads.at(-1)));
   check('smart mesh then runs on the imported task',
     tripoBodies[1]?.type === 'highpoly_to_lowpoly' && tripoBodies[1]?.original_model_task_id === 'tripo_import_1',
     JSON.stringify([tripoBodies[1]?.type, tripoBodies[1]?.original_model_task_id]));
@@ -1394,9 +1417,55 @@ try {
     store.removeNode(huge.id);
     return message;
   }, base);
-  check('an unreadable model file fails with a reason', /Could not read that model file|150 MB/.test(bigFile), bigFile);
+  check('an unreachable model file fails with a reason',
+    /could not fetch the model|150 MB/.test(bigFile), bigFile);
 
-  // 32. credential dropdowns are scoped per provider
+  // 32. an FBX is accepted, and a format Tripo cannot import is explained
+  modelUploads.length = 0;
+  tripoBodies.length = 0;
+  const fbx = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const source = store.addNode('model-input', { x: -300, y: 10200 }, {
+      _file: { url: 'data:application/octet-stream;base64,S2F5ZGFyYSBGQlggQmluYXJ5', name: 'hero.fbx', mime: '' },
+    });
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 10200 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: source.id, port: 'model' }, { node: smartNode.id, port: 'model' });
+    await engine.run({ targets: [smartNode.id], force: true });
+    const node = store.state.nodes.get(smartNode.id);
+    return { status: node.status, message: node.message };
+  }, base);
+  check('an FBX model imports', fbx.status === 'done', `${fbx.status}: ${fbx.message}`);
+  check('the FBX keeps its format through the upload',
+    modelUploads.at(-1)?.name === 'hero.fbx' && tripoBodies[0]?.file?.type === 'fbx',
+    JSON.stringify([modelUploads.at(-1), tripoBodies[0]?.file]));
+
+  const unsupported = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const source = store.addNode('model-input', { x: -300, y: 10600 }, {
+      _file: { url: 'data:application/octet-stream;base64,AAAA', name: 'sculpt.blend', mime: '' },
+    });
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 10600 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+    });
+    store.addEdge({ node: source.id, port: 'model' }, { node: smartNode.id, port: 'model' });
+    await engine.run({ targets: [smartNode.id], force: true });
+    const message = store.state.nodes.get(smartNode.id).message;
+    store.removeNode(smartNode.id);
+    store.removeNode(source.id);
+    return message;
+  }, base);
+  check('a format Tripo cannot import lists the ones it can',
+    /GLB, GLTF, OBJ, FBX and STL/.test(unsupported) && /\.blend/.test(unsupported), unsupported);
+
+  // 33. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

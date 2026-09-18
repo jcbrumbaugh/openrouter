@@ -10,7 +10,8 @@
     "proxy": "node scripts/proxy.mjs",
     "test": "node tests/smoke.mjs",
     "screenshot": "node tests/screenshot.mjs",
-    "test:launcher": "bash tests/launcher.sh"
+    "test:launcher": "bash tests/launcher.sh",
+    "test:sigv4": "node tests/sigv4.test.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.0"

@@ -18,6 +18,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { signRequest } from './sigv4.mjs';
 
 const PORT = Number(process.env.PROXY_PORT ?? 8787);
 
@@ -206,6 +207,87 @@ async function handleLibrary(req, res, url) {
   }
 }
 
+const MODEL_FORMATS = { glb: 'glb', gltf: 'glb', obj: 'obj', fbx: 'fbx', stl: 'stl' };
+
+async function uploadTripoModel(req, res, url) {
+  const send = (status, payload) => {
+    res.writeHead(status, { ...CORS, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  };
+  try {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const input = JSON.parse(Buffer.concat(chunks).toString());
+
+    const apiKey = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '')
+      || PROVIDERS.tripo.key();
+    if (!apiKey) throw new Error('no Tripo key supplied');
+
+    const name = String(input.name ?? 'model.glb');
+    const ext = (name.split('.').pop() ?? '').toLowerCase();
+    const format = MODEL_FORMATS[ext];
+    if (!format) {
+      throw new Error(`Tripo imports GLB, GLTF, OBJ, FBX and STL; this is a .${ext || 'file'}`);
+    }
+
+    let body;
+    if (typeof input.dataUrl === 'string') {
+      const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(input.dataUrl);
+      if (!match) throw new Error('dataUrl is not a data URL');
+      body = match[2] ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]));
+    } else if (typeof input.fetchUrl === 'string') {
+      const upstream = await fetch(input.fetchUrl);
+      if (!upstream.ok) throw new Error(`could not fetch the model (${upstream.status})`);
+      body = Buffer.from(await upstream.arrayBuffer());
+    } else {
+      throw new Error('pass dataUrl or fetchUrl');
+    }
+
+    const base = (input.baseUrl || `${PROVIDERS.tripo.upstream}/v2/openapi`).replace(/\/+$/, '');
+    const stsResponse = await fetch(`${base}/upload/sts/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ format }),
+    });
+    const sts = await stsResponse.json().catch(() => null);
+    if (!stsResponse.ok || sts?.code) {
+      throw new Error(`Tripo refused an upload ticket: ${sts?.message ?? stsResponse.status}`);
+    }
+    const ticket = sts?.data ?? {};
+    for (const required of ['sts_ak', 'sts_sk', 'session_token', 's3_host', 'resource_bucket', 'resource_uri']) {
+      if (!ticket[required]) throw new Error(`upload ticket is missing ${required}`);
+    }
+
+    const signed = signRequest({
+      method: 'PUT',
+      host: ticket.s3_host,
+      path: `/${ticket.resource_bucket}/${ticket.resource_uri}`,
+      body,
+      accessKeyId: ticket.sts_ak,
+      secretAccessKey: ticket.sts_sk,
+      sessionToken: ticket.session_token,
+      region: process.env.TRIPO_S3_REGION ?? 'us-east-1',
+      contentType: 'application/octet-stream',
+    });
+
+    const put = await fetch(`https://${ticket.s3_host}/${ticket.resource_bucket}/${ticket.resource_uri}`, {
+      method: 'PUT',
+      headers: { ...signed.headers, 'Content-Length': String(body.length) },
+      body,
+    });
+    if (!put.ok) {
+      const detail = (await put.text().catch(() => '')).slice(0, 300);
+      throw new Error(`the storage upload failed (${put.status}) ${detail}`);
+    }
+
+    console.log(`tripo: uploaded ${name} (${body.length} bytes) as ${format}`);
+    // What create_task wants for an imported model.
+    send(200, { file: { type: format, object: { bucket: ticket.resource_bucket, key: ticket.resource_uri } } });
+  } catch (err) {
+    send(400, { error: { message: err.message } });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
@@ -225,6 +307,14 @@ const server = http.createServer(async (req, res) => {
       library: LIBRARY_ROOT,
       keysFromEnv: Object.fromEntries(Object.entries(PROVIDERS).map(([name, p]) => [name, Boolean(p.key())])),
     }));
+    return;
+  }
+
+  // Tripo's /upload endpoint is images only ("This image file type is not
+  // supported" for a mesh). Models go to S3 with temporary STS credentials,
+  // which needs request signing - so it happens here rather than in the page.
+  if (url.pathname === '/tripo/model-upload' && req.method === 'POST') {
+    await uploadTripoModel(req, res, url);
     return;
   }
 

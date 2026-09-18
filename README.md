@@ -272,10 +272,10 @@ Smart Mesh** node takes either:
 - **an image** — it generates first and then retopologises, both steps in the one
   node, which is the whole route in three nodes: `Image → Tripo Smart Mesh →
   Preview`; or
-- **a 3D model you already have** — a GLB, FBX, OBJ or STL, up to Tripo's 150 MB
-  limit. It is uploaded and turned into a task with `import_model` (the API
-  behind the Studio's "Upload 3D Model"), then retopologised. No generation is
-  involved, so this works on sculpts and scans that never came from Tripo; or
+- **a 3D model you already have** — a GLB, GLTF, FBX, OBJ or STL, up to Tripo's
+  150 MB limit. It is uploaded and turned into a task with `import_model` (the
+  API behind the Studio's "Upload 3D Model"), then retopologised. No generation
+  is involved, so this works on sculpts and scans that never came from Tripo; or
 - **a Task** from a Tripo 3D node — retopology only, against a mesh you already
   paid to generate.
 
@@ -458,6 +458,26 @@ behind it.
 If you move the gateway to another port, the app remembers where it is
 (`setGateway` in the console, or the default `http://localhost:8787`).
 
+### Uploading a model, and why the gateway signs it
+
+Tripo has two upload paths and they are not interchangeable. `/upload` is for
+images — it returns an `image_token` and answers **"This image file type is not
+supported"** for a mesh. Models go to object storage using temporary
+credentials from `/upload/sts/token`, and that request has to be signed
+(AWS Signature V4), which is why Tripo's own SDK reaches for boto3.
+
+Rather than put credentials and signing in the browser, the gateway does it:
+`POST /tripo/model-upload` takes the file (or a URL it should fetch), asks Tripo
+for an upload ticket, signs the storage PUT, and hands back the
+`{object: {bucket, key}}` reference that `import_model` wants. `scripts/sigv4.mjs`
+is the signer, about sixty lines, and `npm run test:sigv4` checks it against the
+worked example in AWS's own documentation — including the signature they
+publish for it, which only matches if the whole chain is right. That matters
+because the real storage endpoint cannot be reached from a test.
+
+If your storage region ever needs to be something other than `us-east-1`, set
+`TRIPO_S3_REGION`.
+
 ## When a provider has a bad day
 
 Gateway errors (502/503/504) are the providers' own infrastructure, and they
@@ -539,6 +559,7 @@ is a development convenience with no auth of its own.
 npm install          # playwright, dev-only
 npm test             # serves the app + mock APIs, drives it in Chromium
 npm run test:launcher # start.command brings both services up and takes them down
+npm run test:sigv4    # the model-upload signer, against AWS's published vector
 node tests/screenshot.mjs   # refreshes docs/screenshot.png
 ```
 

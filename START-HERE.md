@@ -183,8 +183,10 @@ whole chain.
 It takes other things too:
 
 - **A model you already have** — add a **3D Model** node (Input group), upload a
-  GLB, FBX, OBJ or STL, and wire it into Smart Mesh's *Model* input. Your own
-  sculpts and scans can be retopologised without generating anything.
+  GLB, GLTF, FBX, OBJ or STL (up to 150 MB), and wire it into Smart Mesh's
+  *Model* input. Your own sculpts and scans can be retopologised without
+  generating anything. Anything else — a `.blend`, say — is refused with the list
+  of formats Tripo accepts.
 - **The Task output of a Tripo 3D node** — to clean up a mesh you already
   generated, without paying to generate it again.
 

@@ -15,6 +15,7 @@ import {
   uploadFile,
 } from '../providers/tripo.js';
 
+
 const VIEWS = ['front', 'left', 'back', 'right'];
 
 // Tripo takes a public URL as-is; a local upload has to go through /upload first.
@@ -62,31 +63,57 @@ async function localiseMesh({ url, baseUrl, stem, signal, log }) {
 
 // Tripo works on tasks, not files, so a model you already have becomes a task
 // through import_model - the API behind the Studio's "Upload 3D Model".
+//
+// The upload cannot go through Tripo's /upload endpoint: that one is images
+// only and answers "This image file type is not supported" for a mesh. Models
+// go to storage with temporary credentials that have to be signed, so the
+// gateway does that part (see scripts/proxy.mjs and scripts/sigv4.mjs).
 async function importModel({ model, baseUrl, apiKey, signal, log }) {
   const url = model?.url;
   if (!url) throw new Error('That model has no file behind it.');
 
-  let blob;
-  if (url.startsWith('data:')) {
-    blob = dataUrlToBlob(url).blob;
-  } else {
-    log('fetching the model file');
-    const response = await fetch(url.startsWith('blob:') ? url : `${gatewayOrigin(baseUrl)}/fetch?url=${encodeURIComponent(url)}`, { signal })
-      .catch(() => null)
-      ?? await fetch(url, { signal });
-    if (!response?.ok) throw new Error('Could not read that model file to upload it.');
-    blob = await response.blob();
-  }
-
-  const megabytes = blob.size / (1024 * 1024);
-  if (megabytes > 150) {
-    throw new Error(`That model is ${megabytes.toFixed(0)} MB; Tripo accepts up to 150 MB.`);
-  }
-
   const name = model.name ?? 'model.glb';
-  log(`uploading ${name} (${Math.round(blob.size / 1024)} KB) to Tripo`);
-  const token = await uploadFile({ baseUrl, apiKey, blob, filename: name, signal });
-  return createTask({ baseUrl, apiKey, body: { type: 'import_model', file: { type: name.split('.').pop()?.toLowerCase(), file_token: token } }, signal });
+  const payload = { name, baseUrl };
+
+  if (url.startsWith('data:')) {
+    const { blob } = dataUrlToBlob(url);
+    const megabytes = blob.size / (1024 * 1024);
+    if (megabytes > 150) {
+      throw new Error(`That model is ${megabytes.toFixed(0)} MB; Tripo accepts up to 150 MB.`);
+    }
+    payload.dataUrl = url;
+  } else if (url.startsWith('blob:')) {
+    const blob = await (await fetch(url, { signal })).blob();
+    if (blob.size / (1024 * 1024) > 150) {
+      throw new Error('That model is over Tripo\'s 150 MB limit.');
+    }
+    payload.dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } else {
+    // A library or remote file: let the gateway fetch it rather than pulling
+    // it through the page first.
+    payload.fetchUrl = url;
+  }
+
+  log(`uploading ${name} to Tripo`);
+  const response = await fetch(`${gatewayOrigin(baseUrl)}/tripo/model-upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(payload),
+    signal,
+  }).catch((err) => {
+    if (err.name === 'AbortError') throw err;
+    throw new Error('The model upload needs the local gateway running - start it with start.command.');
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error?.message ?? `model upload failed (${response.status})`);
+  if (!result?.file) throw new Error('The upload returned nothing to import.');
+
+  return createTask({ baseUrl, apiKey, body: { type: 'import_model', file: result.file }, signal });
 }
 
 function pickModelUrl(output = {}) {
