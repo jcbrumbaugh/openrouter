@@ -1278,7 +1278,36 @@ try {
   }, base);
   check('with nothing connected it says what to connect', /Connect an image/.test(noInput), noInput);
 
-  // 30. credential dropdowns are scoped per provider
+  // 30. the model actually in use has to be visible without hunting
+  const visible = await page.evaluate(async () => {
+    const { store, canvas } = window.nodeSpace;
+    const node = store.addNode('tripo-smart-mesh', { x: 40, y: 8700 });
+    store.select(node.id);
+    canvas.fitView();
+    await new Promise((r) => setTimeout(r, 200));
+    const card = document.querySelector(`.node[data-node-id="${node.id}"]`);
+    const field = [...card.querySelectorAll('.field')].find(
+      (el) => el.querySelector('.field-label')?.textContent === 'AI model',
+    );
+    const select = field?.querySelector('select');
+    const body = card.querySelector('.node-body');
+    return {
+      exists: Boolean(field),
+      // "advanced" fields are hidden until the toggle is pressed
+      hiddenBehindAdvanced: field?.classList.contains('advanced') ?? null,
+      advancedOpen: body?.classList.contains('show-advanced') ?? null,
+      value: select?.value ?? null,
+      label: select?.selectedOptions?.[0]?.textContent ?? null,
+      sent: store.state.nodes.get(node.id).data.modelVersion,
+    };
+  });
+  check('the AI model field is on the Smart Mesh node', visible.exists === true, JSON.stringify(visible));
+  check('it is not hidden behind Advanced', visible.hiddenBehindAdvanced === false, JSON.stringify(visible));
+  check('it reads P2.0 on the face of the node', visible.label === 'P2.0', String(visible.label));
+  check('and P2.0 is what would be sent', visible.value === 'P-v2.0-20251226' && visible.sent === 'P-v2.0-20251226',
+    JSON.stringify([visible.value, visible.sent]));
+
+  // 31. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

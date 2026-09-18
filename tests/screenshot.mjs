@@ -45,6 +45,15 @@ await page.evaluate(() => {
   });
   const video = store.addNode('runway-video', { x: 700, y: 420 }, { credential: keystore.defaultFor('runway') });
   const videoPreview = store.addNode('preview', { x: 1040, y: 420 });
+  const smart = store.addNode('tripo-smart-mesh', { x: 380, y: 1120 }, {
+    credential: keystore.defaultFor('tripo'),
+    topology: 'quad',
+    faceLimit: 5000,
+  });
+  const smartPreview = store.addNode('preview', { x: 740, y: 1120 });
+  store.addEdge({ node: image.id, port: 'image' }, { node: smart.id, port: 'image' });
+  store.addEdge({ node: smart.id, port: 'model' }, { node: smartPreview.id, port: 'value' });
+
   const notes = store.addNode('note', { x: 40, y: 700 }, {
     value: 'Quad off while iterating so it previews.\nTurn it on for the take to rig.\n40k faces looked right at this scale.',
   });

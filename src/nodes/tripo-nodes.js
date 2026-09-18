@@ -316,7 +316,19 @@ export function registerTripoNodes(registry) {
         zeroLabel: '500',
       },
       { id: 'bake', kind: 'checkbox', label: 'Bake textures onto the new mesh' },
-      { id: 'modelVersion', kind: 'text', label: 'AI model', placeholder: SMART_MESH_VERSION, advanced: true },
+      {
+        id: 'modelVersion',
+        kind: 'select',
+        label: 'AI model',
+        options: [{ value: SMART_MESH_VERSION, label: 'P2.0' }],
+      },
+      {
+        id: 'modelOverride',
+        kind: 'text',
+        label: 'Model version override',
+        placeholder: 'only if Tripo ships a newer one',
+        advanced: true,
+      },
       ...sharedFields(DEFAULT_TRIPO_BASE),
       { id: '_result', kind: 'preview', label: '' },
     ],
@@ -328,6 +340,7 @@ export function registerTripoNodes(registry) {
       faceLimit: 5000,
       bake: true,
       modelVersion: SMART_MESH_VERSION,
+      modelOverride: '',
       baseUrl: DEFAULT_TRIPO_BASE,
       pollSeconds: 5,
       timeoutSeconds: 600,
@@ -383,7 +396,7 @@ export function registerTripoNodes(registry) {
       const body = {
         type: 'highpoly_to_lowpoly',
         original_model_task_id: sourceTask,
-        model_version: data.modelVersion || SMART_MESH_VERSION,
+        model_version: data.modelOverride?.trim() || data.modelVersion || SMART_MESH_VERSION,
         face_limit: Math.max(500, Number(data.faceLimit) || 5000),
         bake: data.bake !== false,
       };
