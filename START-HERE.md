@@ -170,6 +170,15 @@ for all four.
 **Try variations.** Click a node and press `Cmd+D` to duplicate it. Change the
 Seed on the copy, then Run. Two versions sit side by side for comparison.
 
+**Generate several at once.** The Tripo node has *Generations per run* — set it
+to 2 or 4, press Run, and each result appears as a thumbnail. Click the one you
+like; the others cost nothing more.
+
+**Clean up the mesh for rigging.** Drag the Tripo node's **Task** dot into a
+**Tripo Smart Mesh** node. That is the Studio's Smart Mesh: pick quads or
+triangles and a polycount between 500 and 25,000, and it rebuilds the mesh with
+clean edge flow using Tripo's P2.0 model.
+
 **Set a polygon budget.** The Tripo node has a *Polygon budget* slider. Left at
 `auto` Tripo decides. Moving it caps how many faces the mesh has, which matters
 if the model is going into a game engine or onto the web. It does not change

@@ -32,6 +32,8 @@ let tripoFlaky = false;        // 502 the next status check
 let tripoCreateFails = false;  // 502 the next task creation
 let runwayPolls = 0;
 let tripoLastBody = null;
+let tripoParallel = false;
+const tripoBodies = [];
 let openaiCalls = 0;
 let openaiLastBody = null;
 let openaiEditParts = null;
@@ -131,10 +133,28 @@ function mockApi(req, res, url, body, origin, rawBody) {
     }
     if (req.headers.authorization !== 'Bearer tripo-key') return json(401, { code: 1002, message: 'invalid token' });
     tripoLastBody = body;
-    // Follow-up tasks (convert/texture/stylize) reference an existing mesh.
+    tripoBodies.push(body);
+    // Follow-up tasks (convert/texture/stylize/smart mesh) reference an existing mesh.
     if (body?.original_model_task_id) return json(200, { code: 0, data: { task_id: 'tripo_task_2' } });
+    if (tripoParallel) {
+      const id = `tripo_par_${tripoBodies.length}`;
+      return json(200, { code: 0, data: { task_id: id } });
+    }
     tripoPolls = 0;
     return json(200, { code: 0, data: { task_id: 'tripo_task_1' } });
+  }
+  if (/^\/tripo\/v2\/openapi\/task\/tripo_par_\d+$/.test(url.pathname)) {
+    const n = url.pathname.split('_').pop();
+    return json(200, {
+      code: 0,
+      data: {
+        status: 'success',
+        output: {
+          pbr_model: `${origin}/tests/fixtures/model.glb`,
+          rendered_image: `${origin}/tests/fixtures/render.png?v=${n}`,
+        },
+      },
+    });
   }
   if (url.pathname === '/tripo/v2/openapi/task/tripo_task_2') {
     return json(200, {
@@ -1096,7 +1116,89 @@ try {
     return /Runway Video node/.test(def.hint) && def.title === 'OpenRouter Video';
   }));
 
-  // 27. credential dropdowns are scoped per provider
+  // 27. several generations at once, then pick one - without regenerating
+  tripoParallel = true;
+  tripoBodies.length = 0;
+  const many = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const image = store.addNode('image-input', { x: -300, y: 7200 }, {
+      _file: { url: 'data:image/png;base64,iVBORw0KGgo=', name: 'a.png', mime: 'image/png' },
+    });
+    const tripo = store.addNode('tripo-3d', { x: 40, y: 7200 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+      generations: '4',
+      topology: 'quad',
+      modelSeed: 100,
+    });
+    store.addEdge({ node: image.id, port: 'image' }, { node: tripo.id, port: 'front' });
+    await engine.run({ targets: [tripo.id], force: true });
+    const node = store.state.nodes.get(tripo.id);
+    return {
+      id: tripo.id,
+      status: node.status,
+      message: node.message,
+      variants: node.data._variants?.length ?? 0,
+      firstTask: node.outputs?.taskId,
+      thumbs: document.querySelectorAll(`.node[data-node-id="${tripo.id}"] .gallery-item`).length,
+    };
+  }, base);
+  check('four generations run together', many.status === 'done', `${many.status}: ${many.message}`);
+  check('four results come back', many.variants === 4, String(many.variants));
+  check('four tasks were actually created', tripoBodies.length === 4, String(tripoBodies.length));
+  check('quad topology is sent as quad:true', tripoBodies[0]?.quad === true, JSON.stringify(tripoBodies[0]?.quad));
+  check('UV unwrapping is requested by default', tripoBodies[0]?.export_uv === true, String(tripoBodies[0]?.export_uv));
+  check('seeds are varied so the results differ',
+    new Set(tripoBodies.map((b) => b.model_seed)).size === 4,
+    JSON.stringify(tripoBodies.map((b) => b.model_seed)));
+  check('each generation gets a thumbnail', many.thumbs === 4, String(many.thumbs));
+
+  const tasksBefore = tripoBodies.length;
+  const chosenMesh = await page.evaluate(async (nodeId) => {
+    const { store, engine } = window.nodeSpace;
+    document.querySelectorAll(`.node[data-node-id="${nodeId}"] .gallery-item`)[2].click();
+    const node = store.state.nodes.get(nodeId);
+    const taskAfterPick = node.outputs.taskId;
+    await engine.run({ targets: [nodeId] });
+    return {
+      selected: store.state.nodes.get(nodeId).data._selected,
+      taskAfterPick,
+      status: store.state.nodes.get(nodeId).status,
+    };
+  }, many.id);
+  check('picking a generation swaps the outputs', chosenMesh.selected === 2 && chosenMesh.taskAfterPick !== many.firstTask,
+    JSON.stringify(chosenMesh));
+  check('picking a generation creates no new tasks', tripoBodies.length === tasksBefore, `${tasksBefore} -> ${tripoBodies.length}`);
+  check('the re-run after picking is cached', chosenMesh.status === 'cached', chosenMesh.status);
+  tripoParallel = false;
+
+  // 28. Smart Mesh: the Studio's retopology, P2.0
+  const smart = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const source = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d' && n.outputs?.taskId);
+    const smartNode = store.addNode('tripo-smart-mesh', { x: 420, y: 7200 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+      topology: 'quad',
+      faceLimit: 5000,
+    });
+    store.addEdge({ node: source.id, port: 'taskId' }, { node: smartNode.id, port: 'taskId' });
+    await engine.run({ targets: [smartNode.id], force: true });
+    const node = store.state.nodes.get(smartNode.id);
+    return { status: node.status, message: node.message, hasModel: Boolean(node.outputs?.model) };
+  }, base);
+  check('a Smart Mesh run completes', smart.status === 'done', `${smart.status}: ${smart.message}`);
+  check('Smart Mesh uses the highpoly_to_lowpoly task', tripoLastBody?.type === 'highpoly_to_lowpoly', String(tripoLastBody?.type));
+  check('Smart Mesh uses P2.0', tripoLastBody?.model_version === 'P-v2.0-20251226', String(tripoLastBody?.model_version));
+  check('the polycount is sent', tripoLastBody?.face_limit === 5000, String(tripoLastBody?.face_limit));
+  check('the topology choice is sent', tripoLastBody?.quad === true, String(tripoLastBody?.quad));
+  check('Smart Mesh returns a mesh', smart.hasModel === true, JSON.stringify(smart));
+
+  // 29. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
     const labels = (type) => {
       const card = document.querySelector(`.node[data-type="${type}"] select`);

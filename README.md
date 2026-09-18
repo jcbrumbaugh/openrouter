@@ -262,6 +262,39 @@ task against that same mesh:
   text prompt, with its own seed.
 - **Stylize** — lego, voxel, voronoi or minecraft.
 
+### Smart Mesh (P2.0)
+
+The Studio's **Smart Mesh** tab is the `highpoly_to_lowpoly` task in the API, and
+its "P2.0" is the model version `P-v2.0-20251226` — the only version that task
+takes. The **Tripo Smart Mesh** node runs it against a mesh you already
+generated: wire the Tripo 3D node's **Task** output into it, choose **quads or
+triangles**, set the **polycount** (500–25,000, the same range the Studio
+offers), and optionally bake textures onto the result.
+
+That is the Studio's flow too: generate, then retopologise. Generating and
+retopologising are separate tasks, so you can try several polycounts against one
+generation without paying to generate again.
+
+### Generations per run
+
+Tripo has no "give me N" parameter, so the Studio's **Number of Generation**
+1/2/4 is several tasks fired together — which the node now does as well. Set
+**Generations per run**, and each result appears as a thumbnail (Tripo's own
+render of it). Click one to make it the node's output; that costs nothing, since
+all of them are already generated. A fixed seed is varied per slot, or every
+generation would come back identical.
+
+### Topology and UVs
+
+**Topology** is an explicit choice rather than a checkbox: triangles preview in
+the browser, quads come back as FBX and are what you want for rigging.
+
+On UVs, the API exposes two controls and the node exposes both: **Unwrap UVs
+during generation** (`export_uv`, on by default — turning it off is faster and
+leaves UVs to the texturing stage) and **Pack UVs on export** (`pack_uv`) in
+Tripo Refine's convert mode. The Studio's newer **Smart UV: AI Auto Unwrap** has
+no endpoint in the public API yet; when it gets one it is a small node.
+
 ### Polygon budget
 
 The **Polygon budget** slider maps to Tripo's `face_limit`. At `auto` (zero) the

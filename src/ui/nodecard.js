@@ -311,28 +311,44 @@ function buildField(field, ctx) {
       break;
 
     case 'gallery': {
+      // Entries are either plain image URLs or objects carrying a thumbnail,
+      // so meshes can be picked between the same way images are.
       body = h('div', { class: 'gallery' });
+      const thumbOf = (entry) => {
+        if (typeof entry === 'string') return entry;
+        const thumb = field.thumbKey ? entry?.[field.thumbKey] : entry;
+        return typeof thumb === 'string' ? thumb : thumb?.url ?? null;
+      };
       const draw = () => {
         clear(body);
-        const images = node.data._images ?? [];
-        if (!images.length) {
-          body.append(h('div', { class: 'preview empty' }, 'no variations yet - press Run'));
+        const entries = node.data[field.source ?? '_images'] ?? [];
+        if (entries.length < 2) {
+          body.classList.add('hidden');
           return;
         }
+        body.classList.remove('hidden');
         const selected = node.data._selected ?? 0;
         body.append(
-          h('div', { class: 'gallery-grid' }, images.map((src, index) => h(
-            'button',
-            {
-              class: `gallery-item${index === selected ? ' selected' : ''}`,
-              type: 'button',
-              title: `Use variation ${index + 1}`,
-              onclick: () => ctx.onPickVariation?.(node, index),
-            },
-            [h('img', { src, alt: `variation ${index + 1}` }), h('span', { class: 'gallery-index' }, String(index + 1))],
-          ))),
+          h('div', { class: 'gallery-grid' }, entries.map((entry, index) => {
+            const src = thumbOf(entry);
+            return h(
+              'button',
+              {
+                class: `gallery-item${index === selected ? ' selected' : ''}`,
+                type: 'button',
+                title: `Use number ${index + 1}`,
+                onclick: () => ctx.onPickVariation?.(node, index),
+              },
+              [
+                src
+                  ? h('img', { src, alt: `option ${index + 1}` })
+                  : h('span', { class: 'gallery-blank' }, '3D'),
+                h('span', { class: 'gallery-index' }, String(index + 1)),
+              ],
+            );
+          })),
         );
-        body.append(h('div', { class: 'field-note' }, `variation ${selected + 1} of ${images.length} feeds the next node`));
+        body.append(h('div', { class: 'field-note' }, `number ${selected + 1} of ${entries.length} feeds the next node`));
       };
       draw();
       afterSync = draw;

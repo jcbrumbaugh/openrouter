@@ -15,6 +15,10 @@ import { cleanDetail, isRetryableStatus, withRetry } from '../util/http.js';
 
 export const DEFAULT_TRIPO_BASE = 'http://localhost:8787/tripo/v2/openapi';
 
+// Smart Mesh in the Studio is the highpoly_to_lowpoly task in the API, and its
+// "P2.0" is this version. It is the only version that task accepts.
+export const SMART_MESH_VERSION = 'P-v2.0-20251226';
+
 export const TRIPO_MODEL_VERSIONS = [
   { value: 'v3.1-20260211', label: 'v3.1 (newest)' },
   { value: 'v3.0-20250812', label: 'v3.0' },

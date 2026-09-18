@@ -8,6 +8,7 @@ import { DEFAULT_GATEWAY, gatewayOrigin } from '../providers/gateway.js';
 import { requireKeyFor } from '../providers/keyshapes.js';
 import {
   DEFAULT_TRIPO_BASE,
+  SMART_MESH_VERSION,
   TRIPO_MODEL_VERSIONS,
   createTask,
   pollTask,
@@ -91,9 +92,28 @@ export function registerTripoNodes(registry) {
     fields: [
       { id: 'credential', kind: 'credential', label: 'Tripo key', provider: 'tripo' },
       { id: 'modelVersion', kind: 'select', label: 'Model', options: TRIPO_MODEL_VERSIONS },
+      {
+        id: 'topology',
+        kind: 'select',
+        label: 'Topology',
+        options: [
+          { value: 'triangle', label: 'Triangles (previews in the browser)' },
+          { value: 'quad', label: 'Quads - better for rigging, returns FBX' },
+        ],
+      },
+      {
+        id: 'generations',
+        kind: 'select',
+        label: 'Generations per run',
+        options: [
+          { value: '1', label: '1' },
+          { value: '2', label: '2 (pick the better one)' },
+          { value: '4', label: '4 (pick the best one)' },
+        ],
+      },
       { id: 'texture', kind: 'checkbox', label: 'Texture' },
       { id: 'pbr', kind: 'checkbox', label: 'PBR materials' },
-      { id: 'quad', kind: 'checkbox', label: 'Quad topology - better for rigging, but returns FBX so it cannot preview here' },
+      { id: 'exportUv', kind: 'checkbox', label: 'Unwrap UVs during generation', advanced: true },
       { id: 'modelSeed', kind: 'number', label: 'Seed (0 = random each run)', step: '1', min: 0 },
       {
         id: 'faceLimit',
@@ -125,14 +145,17 @@ export function registerTripoNodes(registry) {
         advanced: true,
       },
       ...sharedFields(DEFAULT_TRIPO_BASE),
+      { id: '_gallery', kind: 'gallery', label: '', source: '_variants', thumbKey: 'render' },
       { id: '_result', kind: 'preview', label: '' },
     ],
     defaults: {
       credential: '',
       modelVersion: 'v3.1-20260211',
+      topology: 'triangle',
+      generations: '1',
       texture: true,
       pbr: true,
-      quad: false,
+      exportUv: true,
       modelSeed: 0,
       faceLimit: 0,
       textureQuality: 'standard',
@@ -140,6 +163,19 @@ export function registerTripoNodes(registry) {
       baseUrl: DEFAULT_TRIPO_BASE,
       pollSeconds: 5,
       timeoutSeconds: 600,
+    },
+    cacheIgnore: ['_result', '_gallery', '_variants', '_selected'],
+    // Choosing a different generation swaps the outputs without re-running -
+    // all of them are already generated and paid for.
+    pick(node, index) {
+      const variant = node.data._variants?.[index];
+      if (!variant) return null;
+      return {
+        model: variant.model,
+        render: variant.render,
+        taskId: variant.taskId,
+        json: variant.task,
+      };
     },
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
       const apiKey = requireKeyFor(keystore, data.credential, 'tripo');
@@ -149,7 +185,7 @@ export function registerTripoNodes(registry) {
       if (!connected.includes('front')) throw new Error('Connect an image to the Front input.');
       const multiview = connected.length > 1;
 
-      if (multiview && data.modelVersion.startsWith('Turbo')) {
+      if (multiview && String(data.modelVersion).startsWith('Turbo')) {
         throw new Error('Turbo does not accept multiple views. Pick v2.5 or newer, or connect only the Front image.');
       }
 
@@ -159,10 +195,11 @@ export function registerTripoNodes(registry) {
         pbr: data.pbr !== false,
         texture_quality: data.textureQuality || 'standard',
         geometry_quality: data.geometryQuality || 'standard',
+        export_uv: data.exportUv !== false,
       };
       if (Number(data.faceLimit) > 0) body.face_limit = Number(data.faceLimit);
       if (Number(data.modelSeed) > 0) body.model_seed = Number(data.modelSeed);
-      if (data.quad) body.quad = true;
+      if (data.topology === 'quad') body.quad = true;
 
       if (multiview) {
         // Position carries meaning: [front, left, back, right], null for a view
@@ -185,9 +222,119 @@ export function registerTripoNodes(registry) {
         log(`POST /task image_to_model (${data.modelVersion})`);
       }
 
-      const taskId = await createTask({ baseUrl, apiKey, body, signal });
-      log(`task ${taskId} queued`);
+      // Tripo has no "give me N" parameter, so several generations means
+      // several tasks, run together and picked between afterwards.
+      const wanted = Math.max(1, Math.min(4, Number(data.generations) || 1));
+      const everyMs = Math.max(1, Number(data.pollSeconds) || 5) * 1000;
+      const timeoutMs = (Number(data.timeoutSeconds) || 600) * 1000;
+      const done = [];
 
+      const runOne = async (slot) => {
+        // A fixed seed would make every generation identical, so vary it.
+        const attemptBody = wanted > 1 && Number(data.modelSeed) > 0
+          ? { ...body, model_seed: Number(data.modelSeed) + slot }
+          : body;
+        const taskId = await createTask({ baseUrl, apiKey, body: attemptBody, signal });
+        log(`task ${taskId} queued${wanted > 1 ? ` (${slot + 1} of ${wanted})` : ''}`);
+        const task = await pollTask({
+          baseUrl,
+          apiKey,
+          taskId,
+          signal,
+          everyMs,
+          timeoutMs,
+          onTick: (status, progress, attempt) => {
+            done[slot] = `${status}${typeof progress === 'number' ? ` ${progress}%` : ''}`;
+            setStatus(wanted > 1 ? done.map((d, i) => `${i + 1}:${d ?? '...'}`).join(' ') : done[slot]);
+            if (attempt === 1 || attempt % 6 === 0) log(`task ${taskId}: ${status}`);
+          },
+          onRetry: (err, attempt, delay) => {
+            log(`status check failed (${err.message}) - retrying in ${delay / 1000}s, the job is still running`, 'warn');
+          },
+        });
+        const modelUrl = pickModelUrl(task.output);
+        if (!modelUrl) throw new Error('Tripo finished but returned no model URL.');
+        return {
+          taskId,
+          task,
+          model: await localiseMesh({ url: modelUrl, baseUrl, stem: `tripo-${taskId}`, signal, log }),
+          render: task.output?.rendered_image ? media('image', task.output.rendered_image) : null,
+        };
+      };
+
+      const variants = await Promise.all(Array.from({ length: wanted }, (_, slot) => runOne(slot)));
+      setData({ _variants: variants, _selected: 0, _result: variants[0].model });
+      if (wanted > 1) log(`${variants.length} generations ready - click one to choose it`);
+      const first = variants[0];
+      return { model: first.model, render: first.render, taskId: first.taskId, json: first.task };
+    },
+  });
+
+  registry.register({
+    type: 'tripo-smart-mesh',
+    title: 'Tripo Smart Mesh',
+    category: '3D',
+    accent: '#5ed3c4',
+    hint: 'The Studio\'s Smart Mesh: retopologises a generated mesh with P2.0 at a chosen polycount.',
+    inputs: [{ id: 'taskId', label: 'Task', type: 'text', required: true }],
+    outputs: [
+      { id: 'model', label: 'Model', type: 'model3d' },
+      { id: 'taskId', label: 'Task', type: 'text' },
+      { id: 'json', label: 'JSON', type: 'json' },
+    ],
+    fields: [
+      { id: 'credential', kind: 'credential', label: 'Tripo key', provider: 'tripo' },
+      { id: '_about', kind: 'info', label: '', text: 'Runs on a mesh from a Tripo 3D node - wire its Task output in here.' },
+      {
+        id: 'topology',
+        kind: 'select',
+        label: 'Topology',
+        options: [
+          { value: 'quad', label: 'Quads (rigging, clean edge flow)' },
+          { value: 'triangle', label: 'Triangles (previews in the browser)' },
+        ],
+      },
+      {
+        id: 'faceLimit',
+        kind: 'range',
+        label: 'Polycount (faces)',
+        min: 500,
+        max: 25000,
+        step: 500,
+        zeroLabel: '500',
+      },
+      { id: 'bake', kind: 'checkbox', label: 'Bake textures onto the new mesh' },
+      { id: 'modelVersion', kind: 'text', label: 'AI model', placeholder: SMART_MESH_VERSION, advanced: true },
+      ...sharedFields(DEFAULT_TRIPO_BASE),
+      { id: '_result', kind: 'preview', label: '' },
+    ],
+    defaults: {
+      credential: '',
+      topology: 'quad',
+      faceLimit: 5000,
+      bake: true,
+      modelVersion: SMART_MESH_VERSION,
+      baseUrl: DEFAULT_TRIPO_BASE,
+      pollSeconds: 5,
+      timeoutSeconds: 600,
+    },
+    async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
+      const apiKey = requireKeyFor(keystore, data.credential, 'tripo');
+      const baseUrl = data.baseUrl || DEFAULT_TRIPO_BASE;
+      const source = asText(inputs.taskId).trim();
+      if (!source) throw new Error('Connect the Task output of a Tripo 3D node.');
+
+      const body = {
+        type: 'highpoly_to_lowpoly',
+        original_model_task_id: source,
+        model_version: data.modelVersion || SMART_MESH_VERSION,
+        face_limit: Math.max(500, Number(data.faceLimit) || 5000),
+        bake: data.bake !== false,
+      };
+      if (data.topology === 'quad') body.quad = true;
+
+      log(`POST /task highpoly_to_lowpoly (${body.model_version}, ${body.face_limit} faces, ${data.topology})`);
+      const taskId = await createTask({ baseUrl, apiKey, body, signal });
       const task = await pollTask({
         baseUrl,
         apiKey,
@@ -199,17 +346,13 @@ export function registerTripoNodes(registry) {
           setStatus(`${status}${typeof progress === 'number' ? ` ${progress}%` : ''}`);
           if (attempt === 1 || attempt % 6 === 0) log(`task ${taskId}: ${status}`);
         },
-        onRetry: (err, attempt, delay) => {
-          log(`status check failed (${err.message}) - retrying in ${delay / 1000}s, the job is still running`, 'warn');
-        },
       });
 
       const modelUrl = pickModelUrl(task.output);
       if (!modelUrl) throw new Error('Tripo finished but returned no model URL.');
-      const model = await localiseMesh({ url: modelUrl, baseUrl, stem: `tripo-${taskId}`, signal, log });
-      const render = task.output?.rendered_image ? media('image', task.output.rendered_image) : null;
+      const model = await localiseMesh({ url: modelUrl, baseUrl, stem: `tripo-smart-${taskId}`, signal, log });
       setData({ _result: model });
-      return { model, render, taskId, json: task };
+      return { model, taskId, json: task };
     },
   });
 
@@ -278,6 +421,7 @@ export function registerTripoNodes(registry) {
         showWhen: { mode: 'convert_model' },
       },
       { id: 'textureSize', kind: 'number', label: 'Texture size', step: '512', min: 512, advanced: true, showWhen: { mode: 'convert_model' } },
+      { id: 'packUv', kind: 'checkbox', label: 'Pack UVs on export', showWhen: { mode: 'convert_model' } },
       { id: 'pbr', kind: 'checkbox', label: 'PBR materials', showWhen: { mode: 'texture_model' } },
       { id: 'textureSeed', kind: 'number', label: 'Texture seed (0 = random)', step: '1', min: 0, showWhen: { mode: 'texture_model' } },
       ...sharedFields(DEFAULT_TRIPO_BASE),
@@ -291,11 +435,25 @@ export function registerTripoNodes(registry) {
       quad: false,
       faceLimit: 0,
       textureSize: 4096,
+      packUv: false,
       pbr: true,
       textureSeed: 0,
       baseUrl: DEFAULT_TRIPO_BASE,
       pollSeconds: 5,
       timeoutSeconds: 600,
+    },
+    cacheIgnore: ['_result', '_gallery', '_variants', '_selected'],
+    // Choosing a different generation swaps the outputs without re-running -
+    // all of them are already generated and paid for.
+    pick(node, index) {
+      const variant = node.data._variants?.[index];
+      if (!variant) return null;
+      return {
+        model: variant.model,
+        render: variant.render,
+        taskId: variant.taskId,
+        json: variant.task,
+      };
     },
     async run({ data, inputs, signal, keystore, log, setStatus, setData }) {
       const apiKey = requireKeyFor(keystore, data.credential, 'tripo');
@@ -307,6 +465,7 @@ export function registerTripoNodes(registry) {
       if (data.mode === 'convert_model') {
         body.format = data.format;
         body.texture_size = Number(data.textureSize) || 4096;
+        if (data.packUv) body.pack_uv = true;
         if (data.quad) body.quad = true;
         if (Number(data.faceLimit) > 0) body.face_limit = Number(data.faceLimit);
       } else if (data.mode === 'stylize_model') {

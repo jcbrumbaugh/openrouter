@@ -86,16 +86,24 @@ const canvas = createCanvas(canvasRoot, {
   // Choosing a variation swaps what this node hands downstream, without
   // re-running it - the images are already paid for and in hand.
   onPickVariation: (node, index) => {
-    const images = node.data._images ?? [];
-    if (!images[index]) return;
-    // updateNodeData invalidates the node's cache, which here would mean paying
-    // for the images again on the next run. The selection is excluded from the
-    // cache key, so the key from before the edit is still the right one.
+    const def = registry.get(node.type);
+    // A node definition says what choosing option N means for its outputs; the
+    // default is the simple "gallery of images" case.
+    const patch = def.pick
+      ? def.pick(node, index)
+      : (node.data._images?.[index] ? { image: media('image', node.data._images[index]) } : null);
+    if (!patch) return;
+    // updateNodeData clears the cache key, which here would mean paying for the
+    // work again on the next run. The selection is excluded from the cache key,
+    // so the key from before the edit is still the right one.
     const cacheKey = node.cacheKey;
-    store.updateNodeData(node.id, { _selected: index });
-    store.setNodeOutputs(node.id, { ...node.outputs, image: media('image', images[index]) }, cacheKey);
+    store.updateNodeData(node.id, {
+      _selected: index,
+      _result: patch.model ?? patch.image ?? node.data._result,
+    });
+    store.setNodeOutputs(node.id, { ...node.outputs, ...patch }, cacheKey);
     store.invalidateDownstream(node.id);
-    log(`variation ${index + 1} selected - run again to push it downstream`);
+    log(`option ${index + 1} selected - it now feeds the next node`);
   },
   onQuickAdd: (graphPoint, screenPoint) => quickAdd.open(graphPoint, screenPoint),
   onViewChange: (view) => {
