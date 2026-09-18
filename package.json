@@ -11,7 +11,9 @@
     "test": "node tests/smoke.mjs",
     "screenshot": "node tests/screenshot.mjs",
     "test:launcher": "bash tests/launcher.sh",
-    "test:sigv4": "node tests/sigv4.test.mjs"
+    "test:sigv4": "node tests/sigv4.test.mjs",
+    "test:upload": "node tests/model-upload.test.mjs",
+    "test:all": "npm test && npm run test:sigv4 && npm run test:upload && npm run test:launcher"
   },
   "devDependencies": {
     "playwright": "^1.49.0"

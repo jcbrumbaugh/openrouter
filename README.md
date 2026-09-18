@@ -475,8 +475,15 @@ worked example in AWS's own documentation — including the signature they
 publish for it, which only matches if the whole chain is right. That matters
 because the real storage endpoint cannot be reached from a test.
 
-If your storage region ever needs to be something other than `us-east-1`, set
-`TRIPO_S3_REGION`.
+The storage region is **discovered, not configured**. S3 refuses a signature
+made for the wrong region — but its refusal names the right one
+(`AuthorizationHeaderMalformed ... expecting 'us-west-2'`), so the gateway reads
+that, retries, and remembers it for the session. Setting `TRIPO_S3_REGION` in
+`.env` (which the gateway now loads) skips that one wasted attempt; the log
+tells you the value to use after the first upload.
+
+`npm run test:upload` drives this against stand-ins for Tripo and S3, including
+that exact refusal, and checks the retry lands in the region S3 named.
 
 ## When a provider has a bad day
 
@@ -560,6 +567,8 @@ npm install          # playwright, dev-only
 npm test             # serves the app + mock APIs, drives it in Chromium
 npm run test:launcher # start.command brings both services up and takes them down
 npm run test:sigv4    # the model-upload signer, against AWS's published vector
+npm run test:upload   # model upload end to end, including the region retry
+npm run test:all      # everything above
 node tests/screenshot.mjs   # refreshes docs/screenshot.png
 ```
 

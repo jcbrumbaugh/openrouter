@@ -20,6 +20,13 @@ import path from 'node:path';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { signRequest } from './sigv4.mjs';
 
+// Pick up .env if there is one, so keys and settings can live in a file.
+try {
+  process.loadEnvFile?.(new URL('../.env', import.meta.url).pathname);
+} catch {
+  /* no .env, which is fine */
+}
+
 const PORT = Number(process.env.PROXY_PORT ?? 8787);
 
 // The local library: everything the app saves lands here and nowhere else.
@@ -209,6 +216,64 @@ async function handleLibrary(req, res, url) {
 
 const MODEL_FORMATS = { glb: 'glb', gltf: 'glb', obj: 'obj', fbx: 'fbx', stl: 'stl' };
 
+// S3 rejects a signature made for the wrong region, but the refusal names the
+// right one - so the region is discovered rather than configured. Remembered
+// for the session once learned.
+// `||` rather than `??`: an empty TRIPO_S3_REGION means "not set", and signing
+// with an empty region produces a malformed credential scope.
+let learnedRegion = process.env.TRIPO_S3_REGION?.trim() || null;
+
+function regionFromRefusal(text) {
+  if (!/AuthorizationHeaderMalformed/i.test(text ?? '')) return null;
+  return /<Region>([\w-]+)<\/Region>/i.exec(text)?.[1]
+    ?? /expecting '([\w-]+)'/i.exec(text)?.[1]
+    ?? null;
+}
+
+async function putToStorage({ ticket, body, log = console.log }) {
+  // http for a local test double; real storage is always https.
+  const scheme = /^(127\.0\.0\.1|localhost)(:|$)/.test(ticket.s3_host) ? 'http' : 'https';
+  const target = `${scheme}://${ticket.s3_host}/${ticket.resource_bucket}/${ticket.resource_uri}`;
+
+  const attempt = async (region) => {
+    const signed = signRequest({
+      method: 'PUT',
+      host: ticket.s3_host,
+      path: `/${ticket.resource_bucket}/${ticket.resource_uri}`,
+      body,
+      accessKeyId: ticket.sts_ak,
+      secretAccessKey: ticket.sts_sk,
+      sessionToken: ticket.session_token,
+      region,
+      contentType: 'application/octet-stream',
+    });
+    const response = await fetch(target, {
+      method: 'PUT',
+      headers: { ...signed.headers, 'Content-Length': String(body.length) },
+      body,
+    });
+    return { response, text: response.ok ? '' : (await response.text().catch(() => '')) };
+  };
+
+  const firstRegion = learnedRegion || 'us-east-1';
+  let { response, text } = await attempt(firstRegion);
+
+  if (!response.ok) {
+    const expected = regionFromRefusal(text);
+    if (expected && expected !== firstRegion) {
+      log(`tripo: storage is in ${expected}, not ${firstRegion} - retrying`);
+      learnedRegion = expected;
+      ({ response, text } = await attempt(expected));
+      if (response.ok) log(`tripo: set TRIPO_S3_REGION=${expected} to skip that first attempt`);
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(`the storage upload failed (${response.status}) ${text.slice(0, 300)}`);
+  }
+  return true;
+}
+
 async function uploadTripoModel(req, res, url) {
   const send = (status, payload) => {
     res.writeHead(status, { ...CORS, 'Content-Type': 'application/json' });
@@ -258,27 +323,7 @@ async function uploadTripoModel(req, res, url) {
       if (!ticket[required]) throw new Error(`upload ticket is missing ${required}`);
     }
 
-    const signed = signRequest({
-      method: 'PUT',
-      host: ticket.s3_host,
-      path: `/${ticket.resource_bucket}/${ticket.resource_uri}`,
-      body,
-      accessKeyId: ticket.sts_ak,
-      secretAccessKey: ticket.sts_sk,
-      sessionToken: ticket.session_token,
-      region: process.env.TRIPO_S3_REGION ?? 'us-east-1',
-      contentType: 'application/octet-stream',
-    });
-
-    const put = await fetch(`https://${ticket.s3_host}/${ticket.resource_bucket}/${ticket.resource_uri}`, {
-      method: 'PUT',
-      headers: { ...signed.headers, 'Content-Length': String(body.length) },
-      body,
-    });
-    if (!put.ok) {
-      const detail = (await put.text().catch(() => '')).slice(0, 300);
-      throw new Error(`the storage upload failed (${put.status}) ${detail}`);
-    }
+    await putToStorage({ ticket, body });
 
     console.log(`tripo: uploaded ${name} (${body.length} bytes) as ${format}`);
     // What create_task wants for an imported model.
