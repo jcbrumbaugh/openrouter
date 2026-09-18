@@ -1249,13 +1249,15 @@ try {
   const fromTask = await page.evaluate(async (baseUrl) => {
     const { store, engine, keystore } = window.nodeSpace;
     const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
-    const source = [...store.state.nodes.values()].find((n) => n.type === 'tripo-3d' && n.outputs?.taskId);
+    // Feed the id straight in: wiring an upstream generator would re-run it
+    // under force and count a second task against this check.
+    const id = store.addNode('text', { x: -300, y: 8100 }, { value: 'tripo_task_1' });
     const smartNode = store.addNode('tripo-smart-mesh', { x: 40, y: 8100 }, {
       credential: tripoKey,
       baseUrl: `${baseUrl}/tripo/v2/openapi`,
       pollSeconds: 1,
     });
-    store.addEdge({ node: source.id, port: 'taskId' }, { node: smartNode.id, port: 'taskId' });
+    store.addEdge({ node: id.id, port: 'text' }, { node: smartNode.id, port: 'taskId' });
     await engine.run({ targets: [smartNode.id], force: true });
     return store.state.nodes.get(smartNode.id).status;
   }, base);
@@ -1309,7 +1311,13 @@ try {
   });
   check('a page-local blob image is refused with an explanation', /public URL or a data URL/.test(blobRejected), blobRejected);
 
-  // 17. the toolbar says whether the gateway is running
+  // 17. the toolbar says whether the gateway is running.
+  // Earlier checks point the gateway at the mock, which answers /health, so
+  // aim it somewhere dead first rather than depending on test order.
+  await page.evaluate(async () => {
+    window.nodeSpace.setGateway('http://127.0.0.1:9999');
+    await window.nodeSpaceRefreshGateway();
+  });
   const gatewayDown = await page.locator('#gateway').getAttribute('data-state');
   check('gateway shows as off when it is not running', gatewayDown === 'down', String(gatewayDown));
   const downTitle = await page.locator('#gateway').getAttribute('title');
@@ -1317,8 +1325,13 @@ try {
 
   const gatewayUp = await page.evaluate(async (origin) => {
     const { checkGateway } = await import('/src/providers/gateway.js');
+    window.nodeSpace.setGateway(origin);
+    await window.nodeSpaceRefreshGateway();
     return checkGateway(origin);
   }, base);
+  check('the indicator flips back to on when it is reachable',
+    (await page.locator('#gateway').getAttribute('data-state')) === 'up',
+    await page.locator('#gateway').getAttribute('data-state'));
   check('a running gateway reports ok', gatewayUp.up === true, JSON.stringify(gatewayUp));
   check('the gateway names its providers',
     ['openrouter', 'tripo', 'runway'].every((p) => gatewayUp.providers.includes(p)),
