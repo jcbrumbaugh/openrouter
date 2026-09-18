@@ -276,7 +276,16 @@ Smart Mesh** node takes either:
   paid to generate.
 
 Either way you choose **quads or triangles**, a **polycount** (500–25,000, the
-Studio's range) and whether to bake textures onto the result. Keeping the Task
+Studio's range) and whether to bake textures onto the result.
+
+One subtlety worth recording: **the node does not send `model_version` for this
+task**, because the API rejects it with "The version value is invalid". Tripo's
+own SDK behaves the same way — it forwards a parameter only when it differs from
+its default, and `model_version`'s default there *is* the single allowed value,
+so it never reaches the wire. The version string is documentation of which model
+the server uses, not an argument. The node says as much on its face, and keeps
+an Advanced override for whenever that changes. The same reasoning applies to
+`bake`, which only travels when switched off. Keeping the Task
 route means you can try several polycounts against one generation without
 generating again.
 

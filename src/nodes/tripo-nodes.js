@@ -317,16 +317,16 @@ export function registerTripoNodes(registry) {
       },
       { id: 'bake', kind: 'checkbox', label: 'Bake textures onto the new mesh' },
       {
-        id: 'modelVersion',
-        kind: 'select',
+        id: '_model',
+        kind: 'info',
         label: 'AI model',
-        options: [{ value: SMART_MESH_VERSION, label: 'P2.0' }],
+        text: `P2.0 (${SMART_MESH_VERSION}) - Tripo selects it for this task and rejects an explicit version, so it is not sent.`,
       },
       {
         id: 'modelOverride',
         kind: 'text',
         label: 'Model version override',
-        placeholder: 'only if Tripo ships a newer one',
+        placeholder: 'only if Tripo starts accepting one',
         advanced: true,
       },
       ...sharedFields(DEFAULT_TRIPO_BASE),
@@ -339,7 +339,6 @@ export function registerTripoNodes(registry) {
       topology: 'triangle',
       faceLimit: 5000,
       bake: true,
-      modelVersion: SMART_MESH_VERSION,
       modelOverride: '',
       baseUrl: DEFAULT_TRIPO_BASE,
       pollSeconds: 5,
@@ -393,16 +392,22 @@ export function registerTripoNodes(registry) {
         render = genTask.output?.rendered_image ? media('image', genTask.output.rendered_image) : null;
       }
 
+      // Send only what Tripo's own SDK sends for this task. It forwards a
+      // parameter only when it differs from its default, and model_version's
+      // default is the single allowed value - so the API never receives one and
+      // rejects it with "The version value is invalid" when it does. Likewise
+      // bake defaults to true there, so it only travels when switched off.
       const body = {
         type: 'highpoly_to_lowpoly',
         original_model_task_id: sourceTask,
-        model_version: data.modelOverride?.trim() || data.modelVersion || SMART_MESH_VERSION,
         face_limit: Math.max(500, Number(data.faceLimit) || 5000),
-        bake: data.bake !== false,
       };
       if (data.topology === 'quad') body.quad = true;
+      if (data.bake === false) body.bake = false;
+      const override = data.modelOverride?.trim();
+      if (override) body.model_version = override;
 
-      log(`smart mesh: ${body.model_version}, ${body.face_limit} faces, ${data.topology}`);
+      log(`smart mesh: ${override ? override : `P2.0 (${SMART_MESH_VERSION}, chosen by Tripo)`}, ${body.face_limit} faces, ${data.topology}`);
       const taskId = await createTask({ baseUrl, apiKey, body, signal });
       const task = await poll(taskId, 'smart mesh');
 

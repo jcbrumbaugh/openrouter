@@ -134,6 +134,10 @@ function mockApi(req, res, url, body, origin, rawBody) {
     if (req.headers.authorization !== 'Bearer tripo-key') return json(401, { code: 1002, message: 'invalid token' });
     tripoLastBody = body;
     tripoBodies.push(body);
+    // The real API rejects model_version on highpoly_to_lowpoly.
+    if (body?.type === 'highpoly_to_lowpoly' && body?.model_version) {
+      return json(400, { code: 2002, message: 'The version value is invalid' });
+    }
     // Follow-up tasks (convert/texture/stylize/smart mesh) reference an existing mesh.
     if (body?.original_model_task_id) return json(200, { code: 0, data: { task_id: 'tripo_task_2' } });
     if (tripoParallel) {
@@ -295,11 +299,12 @@ function startServer() {
 }
 
 // Network failures some checks provoke on purpose: a revoked key, a server that
-// is not running, the deliberate 502s in the resilience checks, the gateway poll
+// is not running, the deliberate 502s in the resilience checks, the rejected
+// model-version override, the gateway poll
 // with no gateway, and the viewer CDN while offline. Chromium logs each as a resource notice. Real script errors arrive
 // through the 'pageerror' handler and are never filtered.
 const EXPECTED_NOISE =
-  /status of 401|status of 502|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
+  /status of 401|status of 502|status of 400|ERR_CONNECTION_REFUSED|ERR_UNSAFE_PORT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|cdn\.jsdelivr|model-viewer/;
 const realErrors = (list) => list.filter((text) => !EXPECTED_NOISE.test(text));
 
 // ---- assertions ----------------------------------------------------------
@@ -1199,7 +1204,8 @@ try {
   }, base);
   check('a Smart Mesh run completes', smart.status === 'done', `${smart.status}: ${smart.message}`);
   check('Smart Mesh uses the highpoly_to_lowpoly task', tripoLastBody?.type === 'highpoly_to_lowpoly', String(tripoLastBody?.type));
-  check('Smart Mesh uses P2.0', tripoLastBody?.model_version === 'P-v2.0-20251226', String(tripoLastBody?.model_version));
+  check('Smart Mesh sends no explicit version, which the API rejects',
+    tripoLastBody?.model_version === undefined, String(tripoLastBody?.model_version));
   check('the polycount is sent', tripoLastBody?.face_limit === 5000, String(tripoLastBody?.face_limit));
   check('the topology choice is sent', tripoLastBody?.quad === true, String(tripoLastBody?.quad));
   check('Smart Mesh returns a mesh', smart.hasModel === true, JSON.stringify(smart));
@@ -1234,8 +1240,8 @@ try {
   }, base);
   check('image straight into Smart Mesh works', fromImage.status === 'done', `${fromImage.status}: ${fromImage.message}`);
   check('it generates first', tripoBodies[0]?.type === 'image_to_model', String(tripoBodies[0]?.type));
-  check('then retopologises with P2.0',
-    tripoBodies[1]?.type === 'highpoly_to_lowpoly' && tripoBodies[1]?.model_version === 'P-v2.0-20251226',
+  check('then retopologises with the smart mesh task',
+    tripoBodies[1]?.type === 'highpoly_to_lowpoly' && tripoBodies[1]?.model_version === undefined,
     JSON.stringify([tripoBodies[1]?.type, tripoBodies[1]?.model_version]));
   check('the retopology runs on the mesh it just generated',
     tripoBodies[1]?.original_model_task_id === 'tripo_task_1', String(tripoBodies[1]?.original_model_task_id));
@@ -1289,23 +1295,40 @@ try {
     const field = [...card.querySelectorAll('.field')].find(
       (el) => el.querySelector('.field-label')?.textContent === 'AI model',
     );
-    const select = field?.querySelector('select');
     const body = card.querySelector('.node-body');
     return {
       exists: Boolean(field),
       // "advanced" fields are hidden until the toggle is pressed
       hiddenBehindAdvanced: field?.classList.contains('advanced') ?? null,
       advancedOpen: body?.classList.contains('show-advanced') ?? null,
-      value: select?.value ?? null,
-      label: select?.selectedOptions?.[0]?.textContent ?? null,
-      sent: store.state.nodes.get(node.id).data.modelVersion,
+      text: field?.querySelector('.field-note')?.textContent ?? null,
     };
   });
-  check('the AI model field is on the Smart Mesh node', visible.exists === true, JSON.stringify(visible));
+  check('the AI model line is on the Smart Mesh node', visible.exists === true, JSON.stringify(visible));
   check('it is not hidden behind Advanced', visible.hiddenBehindAdvanced === false, JSON.stringify(visible));
-  check('it reads P2.0 on the face of the node', visible.label === 'P2.0', String(visible.label));
-  check('and P2.0 is what would be sent', visible.value === 'P-v2.0-20251226' && visible.sent === 'P-v2.0-20251226',
-    JSON.stringify([visible.value, visible.sent]));
+  check('it names P2.0 on the face of the node', /P2\.0/.test(visible.text ?? ''), String(visible.text));
+  check('and explains why no version is sent', /rejects an explicit version/.test(visible.text ?? ''), String(visible.text));
+
+  // an override is the escape hatch, and it does reach the request
+  const overridden = await page.evaluate(async (baseUrl) => {
+    const { store, engine, keystore } = window.nodeSpace;
+    const tripoKey = keystore.list().find((c) => c.provider === 'tripo').id;
+    const id = store.addNode('text', { x: -300, y: 9000 }, { value: 'tripo_task_1' });
+    const node = store.addNode('tripo-smart-mesh', { x: 40, y: 9000 }, {
+      credential: tripoKey,
+      baseUrl: `${baseUrl}/tripo/v2/openapi`,
+      pollSeconds: 1,
+      modelOverride: 'P-v9.9-future',
+    });
+    store.addEdge({ node: id.id, port: 'text' }, { node: node.id, port: 'taskId' });
+    await engine.run({ targets: [node.id], force: true });
+    const message = store.state.nodes.get(node.id).message;
+    store.removeNode(node.id);
+    store.removeNode(id.id);
+    return message;
+  }, base);
+  check('an override does reach the request', tripoLastBody?.model_version === 'P-v9.9-future', String(tripoLastBody?.model_version));
+  check('and a rejected override surfaces the reason', /version value is invalid/.test(overridden), overridden);
 
   // 31. credential dropdowns are scoped per provider
   const scoping = await page.evaluate(() => {
